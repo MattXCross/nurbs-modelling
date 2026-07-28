@@ -77,7 +77,7 @@ int main() {
     // Define 3x3 control point grid
     std::vector<ControlPoint> points = {
         {{ -4, 0, -4 }, 1.0}, {{ -1, 3, -4 }, 1.0}, {{ 2, -2, -4 }, 1.0},
-        {{ -4, 1,  0 }, 1.0}, {{ -1, 5,  0 }, 0.125}, {{ 2,  1,  0 }, 1.0},
+        {{ -4, 1,  0 }, 1.0}, {{ -1, 5,  0 }, 3.0}, {{ 2,  1,  0 }, 1.0},
         {{ -4, 0,  4 }, 1.0}, {{ -1, 2,  4 }, 1.0}, {{ 2,  0,  4 }, 1.0}
     };
 
@@ -103,7 +103,7 @@ int main() {
                 for (const auto& node : scene.nodes()) {
                     if (node.surface) {
                         draw_control_net(*node.surface);
-                        draw_surface_wireframe(*node.surface, 25, 25);
+                        draw_surface_wireframe(*node.surface, 100, 100);
                     }
                 }
             EndMode3D();

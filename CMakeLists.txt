@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.23)
 project(nurbmodelling)
 
 set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
@@ -19,7 +20,13 @@ add_library(cad_kernel STATIC
 
 target_include_directories(cad_kernel PUBLIC include)
 
-target_compile_options(cad_kernel PRIVATE -Wall -Wextra -Wpedantic)
+if(MSVC)
+    target_compile_options(cad_kernel PRIVATE /W4)
+else()
+    target_compile_options(cad_kernel PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 add_executable(cad_app main.cpp)
 target_link_libraries(cad_app PRIVATE cad_kernel raylib)
+
+set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT cad_app)
