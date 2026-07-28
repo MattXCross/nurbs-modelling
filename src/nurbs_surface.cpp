@@ -33,13 +33,31 @@ std::expected<Point3D, CadError> NurbsSurface::evaluate(double u, double v) cons
     double fu = u_idx - u0;
     double fv = v_idx - v0;
 
-    Point3D p00 = net[u0, v0].position;
-    Point3D p10 = net[u1, v0].position;
-    Point3D p01 = net[u0, v1].position;
-    Point3D p11 = net[u1, v1].position;
+    const auto& cp00 = net[u0, v0];
+    const auto& cp10 = net[u1, v0];
+    const auto& cp01 = net[u0, v1];
+    const auto& cp11 = net[u1, v1];
 
-    Point3D p0 = p00 * (1.0 - fu) + p10 * fu;
-    Point3D p1 = p01 * (1.0 - fu) + p11 * fu;
+    double b00 = (1.0 - fu) * (1.0 - fv);
+    double b10 = fu * (1.0 - fv);
+    double b01 = (1.0 - fu) * fv;
+    double b11 = fu * fv;
 
-    return p0 * (1.0 - fv) + p1 * fv;
+    double weight_sum = 
+        b00 * cp00.weight + 
+        b10 * cp10.weight + 
+        b01 * cp01.weight + 
+        b11 * cp11.weight;
+
+    if (weight_sum <= 0.0) {
+        return std::unexpected(CadError::DegenerateSurface);
+    }
+
+    Point3D weighted_point_sum = 
+        (cp00.position * (b00 * cp00.weight)) +
+        (cp10.position * (b10 * cp10.weight)) +
+        (cp01.position * (b01 * cp01.weight)) +
+        (cp11.position * (b11 * cp11.weight));
+
+    return weighted_point_sum * (1.0 / weight_sum);
 }
