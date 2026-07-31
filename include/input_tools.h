@@ -7,7 +7,6 @@
 
 #include "input_frame.h"
 #include "orbit_camera.h"
-#include "raylib.h"
 #include "scene.h"
 
 class IInputTool {
@@ -29,7 +28,7 @@ public:
     ) override {
         if (input.middle_mouse) {
             if (input.modifiers.shift) {
-                camera_controller.pan(input.mouse_delta, static_cast<float>(GetScreenHeight()));
+                camera_controller.pan(input.mouse_delta, static_cast<float>(input.screen_height));
             } else {
                 camera_controller.orbit(input.mouse_delta);
             }

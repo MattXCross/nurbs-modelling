@@ -1,10 +1,24 @@
 #include "ui/ui_widgets.h"
 
+#include "raylib.h"
+
 #include <algorithm>
 #include <format>
 #include <utility>
 
-UILabel::UILabel(Vector2 position, std::string text, int font_size, Color color)
+namespace {
+
+Rectangle to_raylib(Rect rectangle) {
+    return {rectangle.x, rectangle.y, rectangle.width, rectangle.height};
+}
+
+Color to_raylib(Rgba color) {
+    return {color.red, color.green, color.blue, color.alpha};
+}
+
+} // namespace
+
+UILabel::UILabel(Vec2 position, std::string text, int font_size, Rgba color)
     : m_text(std::move(text)), m_color(color), m_font_size(font_size) {
     m_bounds = {
         position.x,
@@ -29,21 +43,21 @@ void UILabel::render() const {
         static_cast<int>(m_bounds.x),
         static_cast<int>(m_bounds.y),
         m_font_size,
-        m_color
+        to_raylib(m_color)
     );
 }
 
-void UILabel::set_position(Vector2 position) {
+void UILabel::set_position(Vec2 position) {
     m_bounds.x = position.x;
     m_bounds.y = position.y;
 }
 
-Rectangle UILabel::bounds() const {
+Rect UILabel::bounds() const {
     return m_bounds;
 }
 
 UISlider::UISlider(
-    Rectangle bounds,
+    Rect bounds,
     std::string label,
     float minimum,
     float maximum,
@@ -71,7 +85,7 @@ bool UISlider::is_dragging() const {
 }
 
 bool UISlider::handle_input(const InputFrameSnapshot& input) {
-    const bool mouse_over = CheckCollisionPointRec(input.mouse_position, m_bounds);
+    const bool mouse_over = m_bounds.contains(input.mouse_position);
     if (input.left_mouse_pressed && mouse_over) {
         m_is_dragging = true;
     }
@@ -92,14 +106,14 @@ bool UISlider::has_pointer_capture() const {
 }
 
 void UISlider::render() const {
-    DrawRectangleRec(m_bounds, Color{45, 53, 66, 255});
+    DrawRectangleRec(to_raylib(m_bounds), Color{45, 53, 66, 255});
 
     const float filled_width = normalized_value() * m_bounds.width;
     DrawRectangleRec(
         Rectangle{m_bounds.x, m_bounds.y, filled_width, m_bounds.height},
         Color{43, 144, 217, 255}
     );
-    DrawRectangleLinesEx(m_bounds, 1.0f, Color{103, 116, 134, 255});
+    DrawRectangleLinesEx(to_raylib(m_bounds), 1.0f, Color{103, 116, 134, 255});
 
     const int handle_x = static_cast<int>(m_bounds.x + filled_width - 3.0f);
     DrawRectangle(
@@ -120,12 +134,12 @@ void UISlider::render() const {
     );
 }
 
-void UISlider::set_position(Vector2 position) {
+void UISlider::set_position(Vec2 position) {
     m_bounds.x = position.x;
     m_bounds.y = position.y;
 }
 
-Rectangle UISlider::bounds() const {
+Rect UISlider::bounds() const {
     return m_bounds;
 }
 

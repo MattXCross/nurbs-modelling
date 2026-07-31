@@ -7,26 +7,26 @@
 
 class UILabel final : public IUIElement {
 public:
-    UILabel(Vector2 position, std::string text, int font_size = 16, Color color = DARKGRAY);
+    UILabel(Vec2 position, std::string text, int font_size = 16, Rgba color = {80, 80, 80, 255});
 
     void set_text(std::string text);
 
     [[nodiscard]] bool handle_input(const InputFrameSnapshot& input) override;
     void render() const override;
-    void set_position(Vector2 position) override;
-    [[nodiscard]] Rectangle bounds() const override;
+    void set_position(Vec2 position) override;
+    [[nodiscard]] Rect bounds() const override;
 
 private:
-    Rectangle m_bounds{};
+    Rect m_bounds{};
     std::string m_text;
-    Color m_color{DARKGRAY};
+    Rgba m_color{80, 80, 80, 255};
     int m_font_size{16};
 };
 
 class UISlider final : public IUIElement {
 public:
     UISlider(
-        Rectangle bounds,
+        Rect bounds,
         std::string label,
         float minimum,
         float maximum,
@@ -41,14 +41,14 @@ public:
     [[nodiscard]] bool handle_input(const InputFrameSnapshot& input) override;
     [[nodiscard]] bool has_pointer_capture() const override;
     void render() const override;
-    void set_position(Vector2 position) override;
-    [[nodiscard]] Rectangle bounds() const override;
+    void set_position(Vec2 position) override;
+    [[nodiscard]] Rect bounds() const override;
 
 private:
     [[nodiscard]] float normalized_value() const;
     void update_from_mouse(float mouse_x);
 
-    Rectangle m_bounds{};
+    Rect m_bounds{};
     std::string m_label;
     float m_minimum{0.0f};
     float m_maximum{1.0f};

@@ -8,7 +8,7 @@
 
 class ControlPointInspectorPanel final : public IUIElement {
 public:
-    explicit ControlPointInspectorPanel(Vector2 position);
+    explicit ControlPointInspectorPanel(Vec2 position);
 
     void inspect_point(size_t u, size_t v, ControlPoint* point);
     void clear_selection();
@@ -17,8 +17,8 @@ public:
     [[nodiscard]] bool handle_input(const InputFrameSnapshot& input) override;
     [[nodiscard]] bool has_pointer_capture() const override;
     void render() const override;
-    void set_position(Vector2 position) override;
-    [[nodiscard]] Rectangle bounds() const override;
+    void set_position(Vec2 position) override;
+    [[nodiscard]] Rect bounds() const override;
 
 private:
     void rebuild_ui();

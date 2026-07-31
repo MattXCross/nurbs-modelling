@@ -20,6 +20,50 @@ inline Vector3 to_raylib(const Point3D& p) {
     return Vector3{ static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) };
 }
 
+Vector2 to_raylib(Vec2 vector) {
+    return {vector.x, vector.y};
+}
+
+Vector3 to_raylib(Vec3 vector) {
+    return {vector.x, vector.y, vector.z};
+}
+
+Rectangle to_raylib(Rect rectangle) {
+    return {rectangle.x, rectangle.y, rectangle.width, rectangle.height};
+}
+
+Camera3D to_raylib(const CameraState& camera) {
+    return {
+        .position = to_raylib(camera.position),
+        .target = to_raylib(camera.target),
+        .up = to_raylib(camera.up),
+        .fovy = camera.vertical_fov_degrees,
+        .projection = CAMERA_PERSPECTIVE
+    };
+}
+
+InputFrameSnapshot capture_input_frame() {
+    const Vector2 mouse_position = GetMousePosition();
+    const Vector2 mouse_delta = GetMouseDelta();
+    return {
+        .mouse_position = {mouse_position.x, mouse_position.y},
+        .mouse_delta = {mouse_delta.x, mouse_delta.y},
+        .mouse_wheel_delta = GetMouseWheelMove(),
+        .screen_width = GetScreenWidth(),
+        .screen_height = GetScreenHeight(),
+        .middle_mouse = IsMouseButtonDown(MOUSE_MIDDLE_BUTTON),
+        .left_mouse = IsMouseButtonDown(MOUSE_LEFT_BUTTON),
+        .right_mouse = IsMouseButtonDown(MOUSE_RIGHT_BUTTON),
+        .left_mouse_pressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON),
+        .left_mouse_released = IsMouseButtonReleased(MOUSE_LEFT_BUTTON),
+        .modifiers = {
+            .shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT),
+            .ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL),
+            .alt = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)
+        }
+    };
+}
+
 void draw_control_net(const NurbsSurface& surface, const ControlPoint* selected_point = nullptr) {
     auto net = surface.control_net_2d(); // C++23 std::mdspan
     for (size_t u = 0; u < net.extent(0); ++u) {
@@ -64,10 +108,10 @@ void draw_surface_wireframe(const NurbsSurface& surface, int u_samples = 20, int
     }
 }
 
-void draw_toolbar_button(Rectangle bounds, const char* label, bool active = false) {
+void draw_toolbar_button(Rect bounds, const char* label, bool active = false) {
     const Color fill = active ? Color{45, 108, 145, 255} : Color{37, 45, 57, 255};
-    DrawRectangleRec(bounds, fill);
-    DrawRectangleLinesEx(bounds, 1.0f, Color{69, 82, 99, 255});
+    DrawRectangleRec(to_raylib(bounds), fill);
+    DrawRectangleLinesEx(to_raylib(bounds), 1.0f, Color{69, 82, 99, 255});
     const int font_size = 15;
     const int text_width = MeasureText(label, font_size);
     DrawText(
@@ -80,7 +124,7 @@ void draw_toolbar_button(Rectangle bounds, const char* label, bool active = fals
 }
 
 void draw_editor_chrome(const EditorLayout& layout, bool has_selection) {
-    DrawRectangleRec(layout.toolbar, Color{23, 28, 36, 255});
+    DrawRectangleRec(to_raylib(layout.toolbar), Color{23, 28, 36, 255});
     DrawLine(
         0,
         static_cast<int>(layout.toolbar.height - 1.0f),
@@ -95,7 +139,7 @@ void draw_editor_chrome(const EditorLayout& layout, bool has_selection) {
     draw_toolbar_button({302.0f, 8.0f, 72.0f, 32.0f}, "Modify");
     draw_toolbar_button({382.0f, 8.0f, 72.0f, 32.0f}, "View");
 
-    DrawRectangleRec(layout.inspector, Color{20, 25, 32, 255});
+    DrawRectangleRec(to_raylib(layout.inspector), Color{20, 25, 32, 255});
     DrawLine(
         static_cast<int>(layout.inspector.width - 1.0f),
         static_cast<int>(layout.inspector.y),
@@ -118,8 +162,8 @@ int main() {
     SetTargetFPS(60);
 
     OrbitCameraController camera_controller(
-      Vector3{10.0f, 10.0f, 10.0f},
-      Vector3{0.0, 0.0, 0.0}
+      Vec3{10.0f, 10.0f, 10.0f},
+      Vec3{0.0f, 0.0f, 0.0f}
     );
 
     // Demonstration of Topology Graph (shared_ptr / weak_ptr)
@@ -140,7 +184,7 @@ int main() {
     surface->translate(Point3D{1.0, 0.0, 0.0});
 
     UILayer ui_layer;
-    auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(Vector2{10.0f, 92.0f});
+    auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(Vec2{10.0f, 92.0f});
 
     Scene scene;
     scene.add_entity("WaveSurface", std::move(surface));
@@ -173,9 +217,9 @@ int main() {
         }
         layout = next_layout;
 
-        InputFrameSnapshot input = InputFrameSnapshot::capture_input_frame();
+        InputFrameSnapshot input = capture_input_frame();
         const bool ui_consumed_input = ui_layer.handle_input(input);
-        const bool pointer_in_viewport = CheckCollisionPointRec(input.mouse_position, layout.viewport);
+        const bool pointer_in_viewport = layout.viewport.contains(input.mouse_position);
         if (!input.middle_mouse) {
             viewport_has_pointer_capture = false;
         } else if (pointer_in_viewport) {
@@ -195,7 +239,7 @@ int main() {
 
         BeginTextureMode(viewport_target);
             ClearBackground(Color{16, 20, 26, 255});
-            BeginMode3D(camera_controller.raw_camera());
+            BeginMode3D(to_raylib(camera_controller.camera()));
                 DrawGrid(20, 1.0f);
 
                 for (const auto& node : scene.nodes()) {
@@ -217,7 +261,7 @@ int main() {
                     static_cast<float>(viewport_target.texture.width),
                     -static_cast<float>(viewport_target.texture.height)
                 },
-                layout.viewport,
+                to_raylib(layout.viewport),
                 Vector2{},
                 0.0f,
                 WHITE
