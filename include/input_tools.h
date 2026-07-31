@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -15,7 +16,7 @@ public:
     virtual void process_input(
         const InputFrameSnapshot& input,
         OrbitCameraController& camera_controller,
-        Scene& scene
+        Scene&
     ) = 0;
 };
 
@@ -24,7 +25,7 @@ public:
     void process_input(
         const InputFrameSnapshot& input,
         OrbitCameraController& camera_controller,
-        Scene& scene
+        Scene&
     ) override {
         if (input.middle_mouse) {
             if (input.modifiers.shift) {
@@ -38,6 +39,34 @@ public:
             camera_controller.zoom(input.mouse_wheel_delta);
         }
     }
+};
+
+class ControlPointSelectionTool final : public IInputTool {
+public:
+    using SelectionHandler = std::move_only_function<void(
+        NurbsSurface& surface,
+        size_t u,
+        size_t v,
+        ControlPoint& point
+    )>;
+    using ClearHandler = std::move_only_function<void()>;
+
+    explicit ControlPointSelectionTool(
+        SelectionHandler on_selection,
+        ClearHandler on_clear = {},
+        float hit_radius = 12.0f
+    );
+
+    void process_input(
+        const InputFrameSnapshot& input,
+        OrbitCameraController& camera_controller,
+        Scene& scene
+    ) override;
+
+private:
+    SelectionHandler m_on_selection;
+    ClearHandler m_on_clear;
+    float m_hit_radius{12.0f};
 };
 
 class InputToolDispatcher {

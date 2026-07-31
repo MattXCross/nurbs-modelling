@@ -4,7 +4,6 @@
 #include <cmath>
 
 #include "raylib.h"
-#include "raymath.h"
 
 class OrbitCameraController {
 private:
@@ -26,8 +25,19 @@ public:
         m_raylib_camera.fovy = fov;
         m_raylib_camera.projection = CAMERA_PERSPECTIVE;
 
-        Vector3 offset = Vector3Subtract(init_position, init_target);
-        m_distance = Vector3Length(offset);
+        Vector3 offset{
+            init_position.x - init_target.x,
+            init_position.y - init_target.y,
+            init_position.z - init_target.z
+        };
+        m_distance = std::sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+        if (m_distance < m_min_distance) {
+            m_distance = m_min_distance;
+            m_yaw_rad = 0.0f;
+            m_pitch_rad = 0.0f;
+            update_position();
+            return;
+        }
         m_yaw_rad = std::atan2(offset.x, offset.z);
         m_pitch_rad = std::asin(offset.y / m_distance);
     }  
@@ -40,16 +50,22 @@ public:
     }
 
     void pan(Vector2 mouse_delta, float screen_height) {
-        Vector3 forward_dir = Vector3Normalize(Vector3Subtract(m_raylib_camera.target, m_raylib_camera.position));
-        Vector3 right_dir = Vector3Normalize(Vector3CrossProduct(forward_dir, m_raylib_camera.up));
-        Vector3 screen_up_dir = Vector3Normalize(Vector3CrossProduct(right_dir, forward_dir));
+        const Vector3 forward_dir = normalized(Vector3{
+            m_raylib_camera.target.x - m_raylib_camera.position.x,
+            m_raylib_camera.target.y - m_raylib_camera.position.y,
+            m_raylib_camera.target.z - m_raylib_camera.position.z
+        });
+        const Vector3 right_dir = normalized(cross(forward_dir, m_raylib_camera.up));
+        const Vector3 screen_up_dir = normalized(cross(right_dir, forward_dir));
 
         float pan_scale = 2.0f * m_distance * std::tan(m_raylib_camera.fovy * DEG2RAD * 0.5f) / screen_height;
 
-        Vector3 horizontal_pan = Vector3Scale(right_dir, -mouse_delta.x * pan_scale);
-        Vector3 vertical_pan = Vector3Scale(screen_up_dir, mouse_delta.y * pan_scale);
-
-        m_raylib_camera.target = Vector3Add(m_raylib_camera.target, Vector3Add(horizontal_pan, vertical_pan));
+        m_raylib_camera.target.x +=
+            right_dir.x * -mouse_delta.x * pan_scale + screen_up_dir.x * mouse_delta.y * pan_scale;
+        m_raylib_camera.target.y +=
+            right_dir.y * -mouse_delta.x * pan_scale + screen_up_dir.y * mouse_delta.y * pan_scale;
+        m_raylib_camera.target.z +=
+            right_dir.z * -mouse_delta.x * pan_scale + screen_up_dir.z * mouse_delta.y * pan_scale;
         update_position();
     }
 
@@ -71,4 +87,23 @@ public:
     }
 
     [[nodiscard]] const Camera3D& raw_camera() const { return m_raylib_camera; }
+
+private:
+    [[nodiscard]] static Vector3 cross(Vector3 left, Vector3 right) {
+        return {
+            left.y * right.z - left.z * right.y,
+            left.z * right.x - left.x * right.z,
+            left.x * right.y - left.y * right.x
+        };
+    }
+
+    [[nodiscard]] static Vector3 normalized(Vector3 vector) {
+        const float length = std::sqrt(
+            vector.x * vector.x + vector.y * vector.y + vector.z * vector.z
+        );
+        if (length == 0.0f) {
+            return {};
+        }
+        return {vector.x / length, vector.y / length, vector.z / length};
+    }
 };

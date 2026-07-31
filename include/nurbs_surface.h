@@ -41,6 +41,10 @@ public:
     NurbsSurface(const NurbsSurface&) = delete;
     NurbsSurface& operator=(const NurbsSurface&) = delete;
 
+    [[nodiscard]] auto control_net_2d() {
+        return std::mdspan(m_control_points.data(), m_u_count, m_v_count);
+    }
+
     [[nodiscard]] auto control_net_2d() const {
         return std::mdspan(m_control_points.data(), m_u_count, m_v_count);
     }
@@ -66,7 +70,7 @@ public:
     template<typename Self>
     Self&& translate(this Self&& self, Point3D delta) {
         for (auto& control_point : self.m_control_points) {
-            control_point.position + delta;
+            control_point.position = control_point.position + delta;
         }
 
         return std::forward<Self>(self);

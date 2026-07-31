@@ -1,27 +1,31 @@
 #include "input_frame.h"
 #include "input_tools.h"
 #include "raylib.h"
-#include "raymath.h"
 
 #include "core.h"
 #include "nurbs_surface.h"
 #include "scene.h"
 #include "topology.h"
 #include "orbit_camera.h"
+#include "ui/control_point_inspector.h"
+#include "ui/ui_layer.h"
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <vector>
 
 inline Vector3 to_raylib(const Point3D& p) {
     return Vector3{ static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) };
 }
 
-void draw_control_net(const NurbsSurface& surface) {
+void draw_control_net(const NurbsSurface& surface, const ControlPoint* selected_point = nullptr) {
     auto net = surface.control_net_2d(); // C++23 std::mdspan
     for (size_t u = 0; u < net.extent(0); ++u) {
         for (size_t v = 0; v < net.extent(1); ++v) {
+            const bool is_selected = &net[u, v] == selected_point;
             Vector3 pos = to_raylib(net[u, v].position);
-            DrawSphere(pos, 0.15f, RED);
+            DrawSphere(pos, is_selected ? 0.24f : 0.15f, is_selected ? GOLD : RED);
 
             if (u + 1 < net.extent(0)) {
                 DrawLine3D(pos, to_raylib(net[u + 1, v].position), GRAY);
@@ -85,15 +89,26 @@ int main() {
     auto surface = std::make_unique<NurbsSurface>(3, 3, std::move(points));
     surface->translate(Point3D{1.0, 0.0, 0.0});
 
+    UILayer ui_layer;
+    auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(Vector2{20.0f, 58.0f});
+
     Scene scene;
     scene.add_entity("WaveSurface", std::move(surface));
 
-    InputToolDispatcher input_despatcher;
-    input_despatcher.register_tools<CameraNavigationTool>();
+    InputToolDispatcher input_dispatcher;
+    input_dispatcher.register_tools<CameraNavigationTool>();
+    input_dispatcher.register_tools<ControlPointSelectionTool>(
+        [inspector](NurbsSurface&, size_t u, size_t v, ControlPoint& point) {
+            inspector->inspect_point(u, v, &point);
+        },
+        [inspector] { inspector->clear_selection(); }
+    );
 
     while (!WindowShouldClose()) {
         InputFrameSnapshot input = InputFrameSnapshot::capture_input_frame();
-        input_despatcher.dispatch(input, camera_controller, scene);
+        if (!ui_layer.handle_input(input)) {
+            input_dispatcher.dispatch(input, camera_controller, scene);
+        }
 
         BeginDrawing();
             ClearBackground(RAYWHITE);
@@ -101,16 +116,20 @@ int main() {
                 DrawGrid(20, 1.0f);
 
                 for (const auto& node : scene.nodes()) {
-                    if (node.surface) {
-                        draw_control_net(*node.surface);
+                    if (node.visible && node.surface) {
+                        draw_control_net(*node.surface, inspector->selected_point());
                         draw_surface_wireframe(*node.surface, 100, 100);
                     }
                 }
             EndMode3D();
 
-            DrawText("Middle Drag: Orbit | Shift + Middle Drag: Pan | Scroll: Zoom", 10, 10, 20, GRAY);
+            DrawText(
+                "Left Click: Select Point | Middle Drag: Orbit | Shift + Middle Drag: Pan | Scroll: Zoom",
+                10, 10, 20, GRAY
+            );
             const char* fps_text = TextFormat("FPS: %d", GetFPS());
             DrawText(fps_text, GetScreenWidth() - MeasureText(fps_text, 20) - 10, 10, 20, DARKGRAY);
+            ui_layer.render();
         EndDrawing();
     }
 

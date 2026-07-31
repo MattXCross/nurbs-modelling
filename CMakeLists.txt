@@ -15,10 +15,16 @@ FetchContent_MakeAvailable(raylib)
 add_library(cad_kernel STATIC
     src/nurbs_surface.cpp
     src/gpu_buffer.cpp
+    src/input_tools.cpp
     src/scene.cpp
+    src/ui/ui_widgets.cpp
+    src/ui/ui_panel.cpp
+    src/ui/ui_layer.cpp
+    src/ui/control_point_inspector.cpp
 )
 
 target_include_directories(cad_kernel PUBLIC include)
+target_link_libraries(cad_kernel PUBLIC raylib)
 
 if(MSVC)
     target_compile_options(cad_kernel PRIVATE /W4)
