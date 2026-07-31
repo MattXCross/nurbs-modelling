@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core.h"
+#include "scene.h"
+#include "selection.h"
 #include "ui/ui_element.h"
 #include "ui/ui_panel.h"
 
@@ -8,9 +10,9 @@
 
 class ControlPointInspectorPanel final : public IUIElement {
 public:
-    explicit ControlPointInspectorPanel(Vec2 position);
+    ControlPointInspectorPanel(Vec2 position, Scene& scene, SelectionModel& selection);
 
-    void inspect_point(size_t u, size_t v, ControlPoint* point);
+    void inspect_point(ControlPointSelection selection);
     void clear_selection();
     [[nodiscard]] ControlPoint* selected_point() const;
 
@@ -24,7 +26,6 @@ private:
     void rebuild_ui();
 
     UIPanel m_panel;
-    ControlPoint* m_selected_point{nullptr};
-    size_t m_selected_u{0};
-    size_t m_selected_v{0};
+    Scene& m_scene;
+    SelectionModel& m_selection;
 };

@@ -8,6 +8,7 @@
 #include "input_frame.h"
 #include "orbit_camera.h"
 #include "scene.h"
+#include "selection.h"
 
 class IInputTool {
 public:
@@ -42,12 +43,7 @@ public:
 
 class ControlPointSelectionTool final : public IInputTool {
 public:
-    using SelectionHandler = std::move_only_function<void(
-        NurbsSurface& surface,
-        size_t u,
-        size_t v,
-        ControlPoint& point
-    )>;
+    using SelectionHandler = std::move_only_function<void(ControlPointSelection)>;
     using ClearHandler = std::move_only_function<void()>;
 
     explicit ControlPointSelectionTool(

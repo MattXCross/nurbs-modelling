@@ -5,35 +5,40 @@
 #include <algorithm>
 #include <format>
 
-ControlPointInspectorPanel::ControlPointInspectorPanel(Vec2 position)
-    : m_panel(Rect{position.x, position.y, 300.0f, 250.0f}, "Control Point") {}
+ControlPointInspectorPanel::ControlPointInspectorPanel(
+    Vec2 position,
+    Scene& scene,
+    SelectionModel& selection
+)
+    : m_panel(Rect{position.x, position.y, 300.0f, 250.0f}, "Control Point"),
+      m_scene(scene),
+      m_selection(selection) {}
 
-void ControlPointInspectorPanel::inspect_point(size_t u, size_t v, ControlPoint* point) {
-    m_selected_u = u;
-    m_selected_v = v;
-    m_selected_point = point;
+void ControlPointInspectorPanel::inspect_point(ControlPointSelection selection) {
+    m_selection.select(selection);
     rebuild_ui();
 }
 
 void ControlPointInspectorPanel::clear_selection() {
-    m_selected_point = nullptr;
+    m_selection.clear();
     m_panel.clear_children();
 }
 
 ControlPoint* ControlPointInspectorPanel::selected_point() const {
-    return m_selected_point;
+    const ControlPointSelection* selection = m_selection.control_point();
+    return selection == nullptr ? nullptr : m_scene.resolve(*selection);
 }
 
 bool ControlPointInspectorPanel::handle_input(const InputFrameSnapshot& input) {
-    return m_selected_point != nullptr && m_panel.handle_input(input);
+    return selected_point() != nullptr && m_panel.handle_input(input);
 }
 
 bool ControlPointInspectorPanel::has_pointer_capture() const {
-    return m_selected_point != nullptr && m_panel.has_pointer_capture();
+    return selected_point() != nullptr && m_panel.has_pointer_capture();
 }
 
 void ControlPointInspectorPanel::render() const {
-    if (m_selected_point != nullptr) {
+    if (selected_point() != nullptr) {
         m_panel.render();
     }
 }
@@ -48,7 +53,9 @@ Rect ControlPointInspectorPanel::bounds() const {
 
 void ControlPointInspectorPanel::rebuild_ui() {
     m_panel.clear_children();
-    if (m_selected_point == nullptr) {
+    ControlPoint* current_point = selected_point();
+    const ControlPointSelection* selection = m_selection.control_point();
+    if (current_point == nullptr || selection == nullptr) {
         return;
     }
 
@@ -58,22 +65,22 @@ void ControlPointInspectorPanel::rebuild_ui() {
     const float slider_width = panel_bounds.width - 32.0f;
     const float position_minimum = static_cast<float>(std::min({
         -10.0,
-        m_selected_point->position.x,
-        m_selected_point->position.y,
-        m_selected_point->position.z
+        current_point->position.x,
+        current_point->position.y,
+        current_point->position.z
     }));
     const float position_maximum = static_cast<float>(std::max({
         10.0,
-        m_selected_point->position.x,
-        m_selected_point->position.y,
-        m_selected_point->position.z
+        current_point->position.x,
+        current_point->position.y,
+        current_point->position.z
     }));
-    const float weight_minimum = static_cast<float>(std::min(0.05, m_selected_point->weight));
-    const float weight_maximum = static_cast<float>(std::max(5.0, m_selected_point->weight));
+    const float weight_minimum = static_cast<float>(std::min(0.05, current_point->weight));
+    const float weight_maximum = static_cast<float>(std::max(5.0, current_point->weight));
 
     m_panel.add_child<UILabel>(
         Vec2{x, panel_bounds.y + 40.0f},
-        std::format("Control vertex  U{} : V{}", m_selected_u, m_selected_v),
+        std::format("Control vertex  U{} : V{}", selection->u, selection->v),
         14,
         Rgba{167, 178, 193, 255}
     );
@@ -81,24 +88,32 @@ void ControlPointInspectorPanel::rebuild_ui() {
     m_panel.add_child<UISlider>(
         Rect{x, first_slider_y, slider_width, 16.0f},
         "Position X", position_minimum, position_maximum,
-        static_cast<float>(m_selected_point->position.x),
-        [this](float value) { if (m_selected_point) m_selected_point->position.x = value; }
+        static_cast<float>(current_point->position.x),
+        [this](float value) {
+            if (ControlPoint* point = this->selected_point()) point->position.x = value;
+        }
     );
     m_panel.add_child<UISlider>(
         Rect{x, first_slider_y + 42.0f, slider_width, 16.0f},
         "Position Y", position_minimum, position_maximum,
-        static_cast<float>(m_selected_point->position.y),
-        [this](float value) { if (m_selected_point) m_selected_point->position.y = value; }
+        static_cast<float>(current_point->position.y),
+        [this](float value) {
+            if (ControlPoint* point = this->selected_point()) point->position.y = value;
+        }
     );
     m_panel.add_child<UISlider>(
         Rect{x, first_slider_y + 84.0f, slider_width, 16.0f},
         "Position Z", position_minimum, position_maximum,
-        static_cast<float>(m_selected_point->position.z),
-        [this](float value) { if (m_selected_point) m_selected_point->position.z = value; }
+        static_cast<float>(current_point->position.z),
+        [this](float value) {
+            if (ControlPoint* point = this->selected_point()) point->position.z = value;
+        }
     );
     m_panel.add_child<UISlider>(
         Rect{x, first_slider_y + 126.0f, slider_width, 16.0f},
-        "Weight W", weight_minimum, weight_maximum, static_cast<float>(m_selected_point->weight),
-        [this](float value) { if (m_selected_point) m_selected_point->weight = value; }
+        "Weight W", weight_minimum, weight_maximum, static_cast<float>(current_point->weight),
+        [this](float value) {
+            if (ControlPoint* point = this->selected_point()) point->weight = value;
+        }
     );
 }

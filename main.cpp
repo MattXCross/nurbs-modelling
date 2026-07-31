@@ -183,18 +183,21 @@ int main() {
     auto surface = std::make_unique<NurbsSurface>(3, 3, std::move(points));
     surface->translate(Point3D{1.0, 0.0, 0.0});
 
-    UILayer ui_layer;
-    auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(Vec2{10.0f, 92.0f});
-
     Scene scene;
-    scene.add_entity("WaveSurface", std::move(surface));
+    [[maybe_unused]] const EntityId surface_id = scene.add_entity("WaveSurface", std::move(surface));
+
+    SelectionModel selection;
+    UILayer ui_layer;
+    auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(
+        Vec2{10.0f, 92.0f},
+        scene,
+        selection
+    );
 
     InputToolDispatcher input_dispatcher;
     input_dispatcher.register_tools<CameraNavigationTool>();
     input_dispatcher.register_tools<ControlPointSelectionTool>(
-        [inspector](NurbsSurface&, size_t u, size_t v, ControlPoint& point) {
-            inspector->inspect_point(u, v, &point);
-        },
+        [inspector](ControlPointSelection selected) { inspector->inspect_point(selected); },
         [inspector] { inspector->clear_selection(); }
     );
 
@@ -266,7 +269,7 @@ int main() {
                 0.0f,
                 WHITE
             );
-            draw_editor_chrome(layout, inspector->selected_point() != nullptr);
+            draw_editor_chrome(layout, !selection.empty());
 
             DrawText(
                 "LMB Select   MMB Orbit   Shift + MMB Pan   Wheel Zoom",

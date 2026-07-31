@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -92,10 +93,7 @@ void ControlPointSelectionTool::process_input(
         return;
     }
 
-    NurbsSurface* selected_surface = nullptr;
-    ControlPoint* selected_point = nullptr;
-    size_t selected_u = 0;
-    size_t selected_v = 0;
+    std::optional<ControlPointSelection> selected_point;
     const float hit_radius_squared = m_hit_radius * m_hit_radius;
     float closest_screen_distance_squared = std::numeric_limits<float>::max();
     float closest_depth = std::numeric_limits<float>::max();
@@ -146,19 +144,16 @@ void ControlPointSelectionTool::process_input(
                     continue;
                 }
 
-                selected_surface = node.surface.get();
-                selected_point = &point;
-                selected_u = u;
-                selected_v = v;
+                selected_point = ControlPointSelection{node.id, u, v};
                 closest_screen_distance_squared = screen_distance_squared;
                 closest_depth = depth;
             }
         }
     }
 
-    if (selected_point != nullptr) {
+    if (selected_point.has_value()) {
         if (m_on_selection) {
-            m_on_selection(*selected_surface, selected_u, selected_v, *selected_point);
+            m_on_selection(*selected_point);
         }
     } else if (m_on_clear) {
         m_on_clear();
