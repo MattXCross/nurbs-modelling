@@ -1,3 +1,4 @@
+#include "command_history.h"
 #include "input_frame.h"
 #include "input_tools.h"
 #include "raylib.h"
@@ -45,6 +46,8 @@ Camera3D to_raylib(const CameraState& camera) {
 InputFrameSnapshot capture_input_frame() {
     const Vector2 mouse_position = GetMousePosition();
     const Vector2 mouse_delta = GetMouseDelta();
+    const bool shift_down = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    const bool ctrl_down = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
     return {
         .mouse_position = {mouse_position.x, mouse_position.y},
         .mouse_delta = {mouse_delta.x, mouse_delta.y},
@@ -56,9 +59,11 @@ InputFrameSnapshot capture_input_frame() {
         .right_mouse = IsMouseButtonDown(MOUSE_RIGHT_BUTTON),
         .left_mouse_pressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON),
         .left_mouse_released = IsMouseButtonReleased(MOUSE_LEFT_BUTTON),
+        .undo_pressed = ctrl_down && !shift_down && IsKeyPressed(KEY_Z),
+        .redo_pressed = ctrl_down && (IsKeyPressed(KEY_Y) || (shift_down && IsKeyPressed(KEY_Z))),
         .modifiers = {
-            .shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT),
-            .ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL),
+            .shift = shift_down,
+            .ctrl = ctrl_down,
             .alt = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)
         }
     };
@@ -187,11 +192,13 @@ int main() {
     [[maybe_unused]] const EntityId surface_id = scene.add_entity("WaveSurface", std::move(surface));
 
     SelectionModel selection;
+    CommandHistory history;
     UILayer ui_layer;
     auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(
         Vec2{10.0f, 92.0f},
         scene,
-        selection
+        selection,
+        history
     );
 
     InputToolDispatcher input_dispatcher;
@@ -221,6 +228,10 @@ int main() {
         layout = next_layout;
 
         InputFrameSnapshot input = capture_input_frame();
+        if ((input.undo_pressed && history.undo()) ||
+            (input.redo_pressed && history.redo())) {
+            inspector->refresh();
+        }
         const bool ui_consumed_input = ui_layer.handle_input(input);
         const bool pointer_in_viewport = layout.viewport.contains(input.mouse_position);
         if (!input.middle_mouse) {

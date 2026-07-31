@@ -62,13 +62,17 @@ UISlider::UISlider(
     float minimum,
     float maximum,
     float initial_value,
-    std::move_only_function<void(float)> on_value_changed
+    std::move_only_function<void(float)> on_value_changed,
+    std::move_only_function<void()> on_edit_started,
+    std::move_only_function<void(float)> on_edit_finished
 )
     : m_bounds(bounds),
       m_label(std::move(label)),
       m_minimum(std::min(minimum, maximum)),
       m_maximum(std::max(minimum, maximum)),
-      m_on_value_changed(std::move(on_value_changed)) {
+      m_on_value_changed(std::move(on_value_changed)),
+      m_on_edit_started(std::move(on_edit_started)),
+      m_on_edit_finished(std::move(on_edit_finished)) {
     set_value(initial_value);
 }
 
@@ -88,12 +92,18 @@ bool UISlider::handle_input(const InputFrameSnapshot& input) {
     const bool mouse_over = m_bounds.contains(input.mouse_position);
     if (input.left_mouse_pressed && mouse_over) {
         m_is_dragging = true;
+        if (m_on_edit_started) {
+            m_on_edit_started();
+        }
     }
 
     if (m_is_dragging) {
         update_from_mouse(input.mouse_position.x);
         if (input.left_mouse_released || !input.left_mouse) {
             m_is_dragging = false;
+            if (m_on_edit_finished) {
+                m_on_edit_finished(m_value);
+            }
         }
         return true;
     }

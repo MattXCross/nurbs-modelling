@@ -13,6 +13,7 @@ struct InputFrameSnapshot {
 
     bool middle_mouse{false}, left_mouse{false}, right_mouse{false};
     bool left_mouse_pressed{false}, left_mouse_released{false};
+    bool undo_pressed{false}, redo_pressed{false};
 
     ModifierKeys modifiers;
 };

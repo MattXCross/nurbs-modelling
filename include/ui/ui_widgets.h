@@ -31,7 +31,9 @@ public:
         float minimum,
         float maximum,
         float initial_value,
-        std::move_only_function<void(float)> on_value_changed
+        std::move_only_function<void(float)> on_value_changed,
+        std::move_only_function<void()> on_edit_started = {},
+        std::move_only_function<void(float)> on_edit_finished = {}
     );
 
     void set_value(float value);
@@ -55,4 +57,6 @@ private:
     float m_value{0.0f};
     bool m_is_dragging{false};
     std::move_only_function<void(float)> m_on_value_changed;
+    std::move_only_function<void()> m_on_edit_started;
+    std::move_only_function<void(float)> m_on_edit_finished;
 };
