@@ -9,7 +9,7 @@
 
 EntityId Scene::add_entity(std::string name, std::unique_ptr<NurbsSurface> surface) {
     const EntityId id{m_next_entity_id++};
-    m_nodes.push_back(SceneNode{id, std::move(name), true, std::move(surface)});
+    m_nodes.push_back(SceneNode{id, std::move(name), true, 1, std::move(surface)});
     return id;
 }
 
@@ -21,6 +21,15 @@ SceneNode* Scene::find_entity(EntityId id) {
 const SceneNode* Scene::find_entity(EntityId id) const {
     const auto node = std::ranges::find(m_nodes, id, &SceneNode::id);
     return node == m_nodes.end() ? nullptr : &*node;
+}
+
+bool Scene::mark_geometry_modified(EntityId id) {
+    SceneNode* node = find_entity(id);
+    if (node == nullptr) {
+        return false;
+    }
+    ++node->geometry_revision;
+    return true;
 }
 
 ControlPoint* Scene::resolve(ControlPointSelection selection) {

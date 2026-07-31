@@ -6,41 +6,18 @@
 #include "core.h"
 #include "editor_layout.h"
 #include "nurbs_surface.h"
+#include "raylib_viewport_renderer.h"
 #include "scene.h"
 #include "topology.h"
 #include "orbit_camera.h"
 #include "ui/control_point_inspector.h"
 #include "ui/ui_layer.h"
 
-#include <algorithm>
-#include <cmath>
 #include <memory>
 #include <vector>
 
-inline Vector3 to_raylib(const Point3D& p) {
-    return Vector3{ static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z) };
-}
-
-Vector2 to_raylib(Vec2 vector) {
-    return {vector.x, vector.y};
-}
-
-Vector3 to_raylib(Vec3 vector) {
-    return {vector.x, vector.y, vector.z};
-}
-
 Rectangle to_raylib(Rect rectangle) {
     return {rectangle.x, rectangle.y, rectangle.width, rectangle.height};
-}
-
-Camera3D to_raylib(const CameraState& camera) {
-    return {
-        .position = to_raylib(camera.position),
-        .target = to_raylib(camera.target),
-        .up = to_raylib(camera.up),
-        .fovy = camera.vertical_fov_degrees,
-        .projection = CAMERA_PERSPECTIVE
-    };
 }
 
 InputFrameSnapshot capture_input_frame() {
@@ -67,50 +44,6 @@ InputFrameSnapshot capture_input_frame() {
             .alt = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)
         }
     };
-}
-
-void draw_control_net(const NurbsSurface& surface, const ControlPoint* selected_point = nullptr) {
-    auto net = surface.control_net_2d(); // C++23 std::mdspan
-    for (size_t u = 0; u < net.extent(0); ++u) {
-        for (size_t v = 0; v < net.extent(1); ++v) {
-            const bool is_selected = &net[u, v] == selected_point;
-            Vector3 pos = to_raylib(net[u, v].position);
-            DrawSphere(pos, is_selected ? 0.24f : 0.15f, is_selected ? GOLD : RED);
-
-            if (u + 1 < net.extent(0)) {
-                DrawLine3D(pos, to_raylib(net[u + 1, v].position), GRAY);
-            }
-            if (v + 1 < net.extent(1)) {
-                DrawLine3D(pos, to_raylib(net[u, v + 1].position), GRAY);
-            }
-        }
-    }
-}
-
-void draw_surface_wireframe(const NurbsSurface& surface, int u_samples = 20, int v_samples = 20) {
-    float du = 1.0f / u_samples;
-    float dv = 1.0f / v_samples;
-
-    for (int i = 0; i < u_samples; ++i) {
-        for (int j = 0; j < v_samples; ++j) {
-            auto p00 = surface.evaluate(i * du, j * dv);
-            auto p10 = surface.evaluate((i + 1) * du, j * dv);
-            auto p01 = surface.evaluate(i * du, (j + 1) * dv);
-            auto p11 = surface.evaluate((i + 1) * du, (j + 1) * dv);
-
-            if (p00 && p10 && p01 && p11) {
-                Vector3 v00 = to_raylib(*p00);
-                Vector3 v10 = to_raylib(*p10);
-                Vector3 v01 = to_raylib(*p01);
-                Vector3 v11 = to_raylib(*p11);
-
-                DrawLine3D(v00, v10, BLUE);
-                DrawLine3D(v10, v11, BLUE);
-                DrawLine3D(v11, v01, BLUE);
-                DrawLine3D(v01, v00, BLUE);
-            }
-        }
-    }
 }
 
 void draw_toolbar_button(Rect bounds, const char* label, bool active = false) {
@@ -160,12 +93,7 @@ void draw_editor_chrome(const EditorLayout& layout, bool has_selection) {
     }
 }
 
-int main() {
-    InitWindow(1280, 720, "Nurbsman");
-    SetWindowState(FLAG_WINDOW_RESIZABLE);
-    SetWindowMinSize(800, 500);
-    SetTargetFPS(60);
-
+int run_editor() {
     OrbitCameraController camera_controller(
       Vec3{10.0f, 10.0f, 10.0f},
       Vec3{0.0f, 0.0f, 0.0f}
@@ -209,7 +137,7 @@ int main() {
     );
 
     EditorLayout layout = EditorLayout::calculate(GetScreenWidth(), GetScreenHeight());
-    RenderTexture2D viewport_target = LoadRenderTexture(
+    RaylibViewportRenderer viewport_renderer(
         static_cast<int>(layout.viewport.width),
         static_cast<int>(layout.viewport.height)
     );
@@ -219,8 +147,7 @@ int main() {
         const EditorLayout next_layout = EditorLayout::calculate(GetScreenWidth(), GetScreenHeight());
         if (next_layout.viewport.width != layout.viewport.width ||
             next_layout.viewport.height != layout.viewport.height) {
-            UnloadRenderTexture(viewport_target);
-            viewport_target = LoadRenderTexture(
+            viewport_renderer.resize(
                 static_cast<int>(next_layout.viewport.width),
                 static_cast<int>(next_layout.viewport.height)
             );
@@ -251,35 +178,11 @@ int main() {
             input_dispatcher.dispatch(viewport_input, camera_controller, scene);
         }
 
-        BeginTextureMode(viewport_target);
-            ClearBackground(Color{16, 20, 26, 255});
-            BeginMode3D(to_raylib(camera_controller.camera()));
-                DrawGrid(20, 1.0f);
-
-                for (const auto& node : scene.nodes()) {
-                    if (node.visible && node.surface) {
-                        draw_control_net(*node.surface, inspector->selected_point());
-                        draw_surface_wireframe(*node.surface, 100, 100);
-                    }
-                }
-            EndMode3D();
-        EndTextureMode();
+        viewport_renderer.render(scene, camera_controller.camera(), inspector->selected_point());
 
         BeginDrawing();
             ClearBackground(Color{16, 20, 26, 255});
-            DrawTexturePro(
-                viewport_target.texture,
-                Rectangle{
-                    0.0f,
-                    0.0f,
-                    static_cast<float>(viewport_target.texture.width),
-                    -static_cast<float>(viewport_target.texture.height)
-                },
-                to_raylib(layout.viewport),
-                Vector2{},
-                0.0f,
-                WHITE
-            );
+            viewport_renderer.composite(layout.viewport);
             draw_editor_chrome(layout, !selection.empty());
 
             DrawText(
@@ -301,7 +204,16 @@ int main() {
         EndDrawing();
     }
 
-    UnloadRenderTexture(viewport_target);
-    CloseWindow();
     return 0;
+}
+
+int main() {
+    InitWindow(1280, 720, "Nurbsman");
+    SetWindowState(FLAG_WINDOW_RESIZABLE);
+    SetWindowMinSize(800, 500);
+    SetTargetFPS(60);
+
+    const int result = run_editor();
+    CloseWindow();
+    return result;
 }

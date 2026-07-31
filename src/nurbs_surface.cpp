@@ -132,8 +132,7 @@ NurbsSurface::NurbsSurface(
       m_v_degree(v_degree),
       m_control_points(std::move(points)),
       m_u_knots(std::move(u_knots)),
-      m_v_knots(std::move(v_knots)),
-      m_gpu_vbo(m_control_points.size() * sizeof(ControlPoint)) {}
+      m_v_knots(std::move(v_knots)) {}
 
 std::vector<double> NurbsSurface::make_open_uniform_knots(size_t control_count, size_t degree) {
     if (control_count == 0 || degree >= control_count ||

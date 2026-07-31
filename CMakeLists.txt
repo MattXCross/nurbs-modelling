@@ -16,7 +16,7 @@ add_library(cad_kernel STATIC
     src/command_history.cpp
     src/editor_layout.cpp
     src/nurbs_surface.cpp
-    src/gpu_buffer.cpp
+    src/raylib_viewport_renderer.cpp
     src/input_tools.cpp
     src/scene.cpp
     src/ui/ui_widgets.cpp

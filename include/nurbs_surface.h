@@ -4,12 +4,12 @@
 #include <vector>
 #include <expected>
 #include <mdspan>
+#include <optional>
 #include <ranges>
 #include <array>
 #include <utility>
 
 #include "core.h"
-#include "gpu_buffer.h"
 
 class NurbsSurface {
 private:
@@ -20,7 +20,6 @@ private:
     std::vector<ControlPoint> m_control_points;
     std::vector<double> m_u_knots;
     std::vector<double> m_v_knots;
-    GpuVertexBuffer m_gpu_vbo;
 
 public:
     NurbsSurface(size_t u_count, size_t v_count, std::vector<ControlPoint> points);
@@ -38,8 +37,8 @@ public:
     NurbsSurface(NurbsSurface&&) noexcept = default;
     NurbsSurface& operator=(NurbsSurface&&) noexcept = default;
 
-    NurbsSurface(const NurbsSurface&) = delete;
-    NurbsSurface& operator=(const NurbsSurface&) = delete;
+    NurbsSurface(const NurbsSurface&) = default;
+    NurbsSurface& operator=(const NurbsSurface&) = default;
 
     [[nodiscard]] auto control_net_2d() {
         return std::mdspan(m_control_points.data(), m_u_count, m_v_count);
@@ -82,4 +81,16 @@ public:
     [[nodiscard]] size_t v_degree() const { return m_v_degree; }
     [[nodiscard]] const std::vector<double>& u_knots() const { return m_u_knots; }
     [[nodiscard]] const std::vector<double>& v_knots() const { return m_v_knots; }
+    [[nodiscard]] std::optional<std::pair<double, double>> u_domain() const {
+        if (m_u_degree >= m_u_knots.size() || m_u_count >= m_u_knots.size()) {
+            return std::nullopt;
+        }
+        return std::pair{m_u_knots[m_u_degree], m_u_knots[m_u_count]};
+    }
+    [[nodiscard]] std::optional<std::pair<double, double>> v_domain() const {
+        if (m_v_degree >= m_v_knots.size() || m_v_count >= m_v_knots.size()) {
+            return std::nullopt;
+        }
+        return std::pair{m_v_knots[m_v_degree], m_v_knots[m_v_count]};
+    }
 };

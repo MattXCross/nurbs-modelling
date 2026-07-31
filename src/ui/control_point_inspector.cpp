@@ -98,9 +98,11 @@ void ControlPointInspectorPanel::begin_edit(ControlPointField field) {
 }
 
 void ControlPointInspectorPanel::preview_edit(ControlPointField field, float value) {
+    const ControlPointSelection* selection = m_selection.control_point();
     ControlPoint* point = selected_point();
-    if (point != nullptr) {
+    if (selection != nullptr && point != nullptr) {
         set_field_value(*point, field, value);
+        (void)m_scene.mark_geometry_modified(selection->entity);
     }
 }
 
@@ -127,6 +129,7 @@ void ControlPointInspectorPanel::finish_edit(ControlPointField field) {
         [scene, selection = edit.selection, field](double value) {
             if (ControlPoint* selected = scene->resolve(selection)) {
                 set_field_value(*selected, field, value);
+                (void)scene->mark_geometry_modified(selection.entity);
             }
         },
         edit.initial_value,
