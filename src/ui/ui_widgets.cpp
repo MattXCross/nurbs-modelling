@@ -1,49 +1,35 @@
 #include "ui/ui_widgets.h"
 
-#include "raylib.h"
-
 #include <algorithm>
 #include <format>
 #include <utility>
-
-namespace {
-
-Rectangle to_raylib(Rect rectangle) {
-    return {rectangle.x, rectangle.y, rectangle.width, rectangle.height};
-}
-
-Color to_raylib(Rgba color) {
-    return {color.red, color.green, color.blue, color.alpha};
-}
-
-} // namespace
 
 UILabel::UILabel(Vec2 position, std::string text, int font_size, Rgba color)
     : m_text(std::move(text)), m_color(color), m_font_size(font_size) {
     m_bounds = {
         position.x,
         position.y,
-        static_cast<float>(MeasureText(m_text.c_str(), m_font_size)),
+        0.0f,
         static_cast<float>(m_font_size)
     };
 }
 
 void UILabel::set_text(std::string text) {
     m_text = std::move(text);
-    m_bounds.width = static_cast<float>(MeasureText(m_text.c_str(), m_font_size));
+    m_bounds.width = 0.0f;
 }
 
 bool UILabel::handle_input(const InputFrameSnapshot&) {
     return false;
 }
 
-void UILabel::render() const {
-    DrawText(
-        m_text.c_str(),
-        static_cast<int>(m_bounds.x),
-        static_cast<int>(m_bounds.y),
+void UILabel::render(IUiRenderer& renderer) const {
+    m_bounds.width = renderer.measure_text(m_text, m_font_size).x;
+    renderer.draw_text(
+        m_text,
+        Vec2{m_bounds.x, m_bounds.y},
         m_font_size,
-        to_raylib(m_color)
+        m_color
     );
 }
 
@@ -115,32 +101,27 @@ bool UISlider::has_pointer_capture() const {
     return m_is_dragging;
 }
 
-void UISlider::render() const {
-    DrawRectangleRec(to_raylib(m_bounds), Color{45, 53, 66, 255});
+void UISlider::render(IUiRenderer& renderer) const {
+    renderer.fill_rect(m_bounds, Rgba{45, 53, 66, 255});
 
     const float filled_width = normalized_value() * m_bounds.width;
-    DrawRectangleRec(
-        Rectangle{m_bounds.x, m_bounds.y, filled_width, m_bounds.height},
-        Color{43, 144, 217, 255}
+    renderer.fill_rect(
+        Rect{m_bounds.x, m_bounds.y, filled_width, m_bounds.height},
+        Rgba{43, 144, 217, 255}
     );
-    DrawRectangleLinesEx(to_raylib(m_bounds), 1.0f, Color{103, 116, 134, 255});
+    renderer.stroke_rect(m_bounds, 1.0f, Rgba{103, 116, 134, 255});
 
-    const int handle_x = static_cast<int>(m_bounds.x + filled_width - 3.0f);
-    DrawRectangle(
-        handle_x,
-        static_cast<int>(m_bounds.y - 2.0f),
-        6,
-        static_cast<int>(m_bounds.height + 4.0f),
-        Color{196, 224, 246, 255}
+    renderer.fill_rect(
+        Rect{m_bounds.x + filled_width - 3.0f, m_bounds.y - 2.0f, 6.0f, m_bounds.height + 4.0f},
+        Rgba{196, 224, 246, 255}
     );
 
     const std::string text = std::format("{}  {:.2f}", m_label, m_value);
-    DrawText(
-        text.c_str(),
-        static_cast<int>(m_bounds.x),
-        static_cast<int>(m_bounds.y - 18.0f),
+    renderer.draw_text(
+        text,
+        Vec2{m_bounds.x, m_bounds.y - 18.0f},
         14,
-        Color{205, 214, 225, 255}
+        Rgba{205, 214, 225, 255}
     );
 }
 

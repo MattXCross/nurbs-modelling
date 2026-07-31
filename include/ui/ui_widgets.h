@@ -12,12 +12,12 @@ public:
     void set_text(std::string text);
 
     [[nodiscard]] bool handle_input(const InputFrameSnapshot& input) override;
-    void render() const override;
+    void render(IUiRenderer& renderer) const override;
     void set_position(Vec2 position) override;
     [[nodiscard]] Rect bounds() const override;
 
 private:
-    Rect m_bounds{};
+    mutable Rect m_bounds{};
     std::string m_text;
     Rgba m_color{80, 80, 80, 255};
     int m_font_size{16};
@@ -42,7 +42,7 @@ public:
 
     [[nodiscard]] bool handle_input(const InputFrameSnapshot& input) override;
     [[nodiscard]] bool has_pointer_capture() const override;
-    void render() const override;
+    void render(IUiRenderer& renderer) const override;
     void set_position(Vec2 position) override;
     [[nodiscard]] Rect bounds() const override;
 

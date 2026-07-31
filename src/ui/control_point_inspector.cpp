@@ -72,9 +72,9 @@ bool ControlPointInspectorPanel::has_pointer_capture() const {
     return selected_point() != nullptr && m_panel.has_pointer_capture();
 }
 
-void ControlPointInspectorPanel::render() const {
+void ControlPointInspectorPanel::render(IUiRenderer& renderer) const {
     if (selected_point() != nullptr) {
-        m_panel.render();
+        m_panel.render(renderer);
     }
 }
 

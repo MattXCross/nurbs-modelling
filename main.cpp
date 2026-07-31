@@ -1,4 +1,5 @@
 #include "command_history.h"
+#include "editor_chrome.h"
 #include "input_frame.h"
 #include "input_tools.h"
 #include "raylib.h"
@@ -6,6 +7,8 @@
 #include "core.h"
 #include "editor_layout.h"
 #include "nurbs_surface.h"
+#include "raylib_input.h"
+#include "raylib_ui_renderer.h"
 #include "raylib_viewport_renderer.h"
 #include "scene.h"
 #include "topology.h"
@@ -15,83 +18,6 @@
 
 #include <memory>
 #include <vector>
-
-Rectangle to_raylib(Rect rectangle) {
-    return {rectangle.x, rectangle.y, rectangle.width, rectangle.height};
-}
-
-InputFrameSnapshot capture_input_frame() {
-    const Vector2 mouse_position = GetMousePosition();
-    const Vector2 mouse_delta = GetMouseDelta();
-    const bool shift_down = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
-    const bool ctrl_down = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-    return {
-        .mouse_position = {mouse_position.x, mouse_position.y},
-        .mouse_delta = {mouse_delta.x, mouse_delta.y},
-        .mouse_wheel_delta = GetMouseWheelMove(),
-        .screen_width = GetScreenWidth(),
-        .screen_height = GetScreenHeight(),
-        .middle_mouse = IsMouseButtonDown(MOUSE_MIDDLE_BUTTON),
-        .left_mouse = IsMouseButtonDown(MOUSE_LEFT_BUTTON),
-        .right_mouse = IsMouseButtonDown(MOUSE_RIGHT_BUTTON),
-        .left_mouse_pressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON),
-        .left_mouse_released = IsMouseButtonReleased(MOUSE_LEFT_BUTTON),
-        .undo_pressed = ctrl_down && !shift_down && IsKeyPressed(KEY_Z),
-        .redo_pressed = ctrl_down && (IsKeyPressed(KEY_Y) || (shift_down && IsKeyPressed(KEY_Z))),
-        .modifiers = {
-            .shift = shift_down,
-            .ctrl = ctrl_down,
-            .alt = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)
-        }
-    };
-}
-
-void draw_toolbar_button(Rect bounds, const char* label, bool active = false) {
-    const Color fill = active ? Color{45, 108, 145, 255} : Color{37, 45, 57, 255};
-    DrawRectangleRec(to_raylib(bounds), fill);
-    DrawRectangleLinesEx(to_raylib(bounds), 1.0f, Color{69, 82, 99, 255});
-    const int font_size = 15;
-    const int text_width = MeasureText(label, font_size);
-    DrawText(
-        label,
-        static_cast<int>(bounds.x + (bounds.width - static_cast<float>(text_width)) * 0.5f),
-        static_cast<int>(bounds.y + (bounds.height - static_cast<float>(font_size)) * 0.5f),
-        font_size,
-        active ? RAYWHITE : Color{190, 199, 211, 255}
-    );
-}
-
-void draw_editor_chrome(const EditorLayout& layout, bool has_selection) {
-    DrawRectangleRec(to_raylib(layout.toolbar), Color{23, 28, 36, 255});
-    DrawLine(
-        0,
-        static_cast<int>(layout.toolbar.height - 1.0f),
-        static_cast<int>(layout.toolbar.width),
-        static_cast<int>(layout.toolbar.height - 1.0f),
-        Color{69, 82, 99, 255}
-    );
-
-    DrawText("NURBSMAN", 16, 15, 18, Color{126, 191, 236, 255});
-    draw_toolbar_button({142.0f, 8.0f, 72.0f, 32.0f}, "Select", true);
-    draw_toolbar_button({222.0f, 8.0f, 72.0f, 32.0f}, "Create");
-    draw_toolbar_button({302.0f, 8.0f, 72.0f, 32.0f}, "Modify");
-    draw_toolbar_button({382.0f, 8.0f, 72.0f, 32.0f}, "View");
-
-    DrawRectangleRec(to_raylib(layout.inspector), Color{20, 25, 32, 255});
-    DrawLine(
-        static_cast<int>(layout.inspector.width - 1.0f),
-        static_cast<int>(layout.inspector.y),
-        static_cast<int>(layout.inspector.width - 1.0f),
-        static_cast<int>(layout.inspector.y + layout.inspector.height),
-        Color{69, 82, 99, 255}
-    );
-    DrawText("PROPERTIES", 16, 66, 13, Color{126, 139, 156, 255});
-
-    if (!has_selection) {
-        DrawText("Nothing selected", 16, 102, 16, Color{132, 143, 157, 255});
-        DrawText("Select a control point in the viewport", 16, 128, 13, Color{91, 103, 118, 255});
-    }
-}
 
 int run_editor() {
     OrbitCameraController camera_controller(
@@ -141,6 +67,7 @@ int run_editor() {
         static_cast<int>(layout.viewport.width),
         static_cast<int>(layout.viewport.height)
     );
+    RaylibUiRenderer ui_renderer;
     bool viewport_has_pointer_capture = false;
 
     while (!WindowShouldClose()) {
@@ -154,7 +81,7 @@ int run_editor() {
         }
         layout = next_layout;
 
-        InputFrameSnapshot input = capture_input_frame();
+        InputFrameSnapshot input = capture_raylib_input_frame();
         if ((input.undo_pressed && history.undo()) ||
             (input.redo_pressed && history.redo())) {
             inspector->refresh();
@@ -183,24 +110,8 @@ int run_editor() {
         BeginDrawing();
             ClearBackground(Color{16, 20, 26, 255});
             viewport_renderer.composite(layout.viewport);
-            draw_editor_chrome(layout, !selection.empty());
-
-            DrawText(
-                "LMB Select   MMB Orbit   Shift + MMB Pan   Wheel Zoom",
-                static_cast<int>(layout.viewport.x + 14.0f),
-                static_cast<int>(layout.viewport.y + layout.viewport.height - 28.0f),
-                14,
-                Color{154, 165, 179, 255}
-            );
-            const char* fps_text = TextFormat("FPS: %d", GetFPS());
-            DrawText(
-                fps_text,
-                GetScreenWidth() - MeasureText(fps_text, 15) - 16,
-                17,
-                15,
-                Color{154, 165, 179, 255}
-            );
-            ui_layer.render();
+            render_editor_chrome(ui_renderer, layout, !selection.empty(), GetFPS());
+            ui_layer.render(ui_renderer);
         EndDrawing();
     }
 

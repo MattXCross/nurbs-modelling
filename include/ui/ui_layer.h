@@ -19,7 +19,7 @@ public:
     }
 
     [[nodiscard]] bool handle_input(const InputFrameSnapshot& input);
-    void render() const;
+    void render(IUiRenderer& renderer) const;
     void clear();
 
 private:

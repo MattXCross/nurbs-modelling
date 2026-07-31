@@ -16,9 +16,9 @@ bool UILayer::handle_input(const InputFrameSnapshot& input) {
     return false;
 }
 
-void UILayer::render() const {
+void UILayer::render(IUiRenderer& renderer) const {
     for (const auto& element : m_elements) {
-        element->render();
+        element->render(renderer);
     }
 }
 

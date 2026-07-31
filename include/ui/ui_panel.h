@@ -25,7 +25,7 @@ public:
 
     [[nodiscard]] bool handle_input(const InputFrameSnapshot& input) override;
     [[nodiscard]] bool has_pointer_capture() const override;
-    void render() const override;
+    void render(IUiRenderer& renderer) const override;
     void set_position(Vec2 position) override;
     [[nodiscard]] Rect bounds() const override;
 

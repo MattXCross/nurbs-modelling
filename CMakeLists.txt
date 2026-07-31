@@ -12,29 +12,52 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
-add_library(cad_kernel STATIC
-    src/command_history.cpp
-    src/editor_layout.cpp
+add_library(cad_geometry STATIC
     src/nurbs_surface.cpp
-    src/raylib_viewport_renderer.cpp
-    src/input_tools.cpp
+)
+target_include_directories(cad_geometry PUBLIC include)
+
+add_library(cad_document STATIC
+    src/command_history.cpp
     src/scene.cpp
+)
+target_include_directories(cad_document PUBLIC include)
+target_link_libraries(cad_document PUBLIC cad_geometry)
+
+add_library(cad_editor STATIC
+    src/editor_chrome.cpp
+    src/editor_layout.cpp
+    src/input_tools.cpp
     src/ui/ui_widgets.cpp
     src/ui/ui_panel.cpp
     src/ui/ui_layer.cpp
     src/ui/control_point_inspector.cpp
 )
+target_include_directories(cad_editor PUBLIC include)
+target_link_libraries(cad_editor PUBLIC cad_document)
 
-target_include_directories(cad_kernel PUBLIC include)
-target_link_libraries(cad_kernel PUBLIC raylib)
+add_library(cad_raylib STATIC
+    src/raylib_input.cpp
+    src/raylib_ui_renderer.cpp
+    src/raylib_viewport_renderer.cpp
+)
+target_include_directories(cad_raylib PUBLIC include)
+target_link_libraries(cad_raylib PUBLIC cad_editor PRIVATE raylib)
 
-if(MSVC)
-    target_compile_options(cad_kernel PRIVATE /W4)
-else()
-    target_compile_options(cad_kernel PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+function(enable_project_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
+enable_project_warnings(cad_geometry)
+enable_project_warnings(cad_document)
+enable_project_warnings(cad_editor)
+enable_project_warnings(cad_raylib)
 
 add_executable(cad_app main.cpp)
-target_link_libraries(cad_app PRIVATE cad_kernel raylib)
+target_link_libraries(cad_app PRIVATE cad_raylib raylib)
 
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT cad_app)

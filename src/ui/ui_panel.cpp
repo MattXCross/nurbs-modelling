@@ -1,16 +1,6 @@
 #include "ui/ui_panel.h"
 
-#include "raylib.h"
-
 #include <utility>
-
-namespace {
-
-Rectangle to_raylib(Rect rectangle) {
-    return {rectangle.x, rectangle.y, rectangle.width, rectangle.height};
-}
-
-} // namespace
 
 UIPanel::UIPanel(Rect bounds, std::string title)
     : m_bounds(bounds), m_title(std::move(title)) {}
@@ -45,23 +35,22 @@ bool UIPanel::has_pointer_capture() const {
     return false;
 }
 
-void UIPanel::render() const {
-    DrawRectangleRec(to_raylib(m_bounds), Color{28, 34, 43, 238});
-    DrawRectangleLinesEx(to_raylib(m_bounds), 1.0f, Color{86, 99, 116, 255});
+void UIPanel::render(IUiRenderer& renderer) const {
+    renderer.fill_rect(m_bounds, Rgba{28, 34, 43, 238});
+    renderer.stroke_rect(m_bounds, 1.0f, Rgba{86, 99, 116, 255});
 
     const Rect header{m_bounds.x, m_bounds.y, m_bounds.width, 30.0f};
-    DrawRectangleRec(to_raylib(header), Color{37, 45, 57, 255});
-    DrawRectangleLinesEx(to_raylib(header), 1.0f, Color{86, 99, 116, 255});
-    DrawText(
-        m_title.c_str(),
-        static_cast<int>(m_bounds.x + 12.0f),
-        static_cast<int>(m_bounds.y + 7.0f),
+    renderer.fill_rect(header, Rgba{37, 45, 57, 255});
+    renderer.stroke_rect(header, 1.0f, Rgba{86, 99, 116, 255});
+    renderer.draw_text(
+        m_title,
+        Vec2{m_bounds.x + 12.0f, m_bounds.y + 7.0f},
         16,
-        Color{126, 191, 236, 255}
+        Rgba{126, 191, 236, 255}
     );
 
     for (const auto& child : m_children) {
-        child->render();
+        child->render(renderer);
     }
 }
 
