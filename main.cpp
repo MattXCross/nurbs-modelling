@@ -3,6 +3,7 @@
 #include "raylib.h"
 
 #include "core.h"
+#include "editor_layout.h"
 #include "nurbs_surface.h"
 #include "scene.h"
 #include "topology.h"
@@ -63,8 +64,57 @@ void draw_surface_wireframe(const NurbsSurface& surface, int u_samples = 20, int
     }
 }
 
+void draw_toolbar_button(Rectangle bounds, const char* label, bool active = false) {
+    const Color fill = active ? Color{45, 108, 145, 255} : Color{37, 45, 57, 255};
+    DrawRectangleRec(bounds, fill);
+    DrawRectangleLinesEx(bounds, 1.0f, Color{69, 82, 99, 255});
+    const int font_size = 15;
+    const int text_width = MeasureText(label, font_size);
+    DrawText(
+        label,
+        static_cast<int>(bounds.x + (bounds.width - static_cast<float>(text_width)) * 0.5f),
+        static_cast<int>(bounds.y + (bounds.height - static_cast<float>(font_size)) * 0.5f),
+        font_size,
+        active ? RAYWHITE : Color{190, 199, 211, 255}
+    );
+}
+
+void draw_editor_chrome(const EditorLayout& layout, bool has_selection) {
+    DrawRectangleRec(layout.toolbar, Color{23, 28, 36, 255});
+    DrawLine(
+        0,
+        static_cast<int>(layout.toolbar.height - 1.0f),
+        static_cast<int>(layout.toolbar.width),
+        static_cast<int>(layout.toolbar.height - 1.0f),
+        Color{69, 82, 99, 255}
+    );
+
+    DrawText("NURBSMAN", 16, 15, 18, Color{126, 191, 236, 255});
+    draw_toolbar_button({142.0f, 8.0f, 72.0f, 32.0f}, "Select", true);
+    draw_toolbar_button({222.0f, 8.0f, 72.0f, 32.0f}, "Create");
+    draw_toolbar_button({302.0f, 8.0f, 72.0f, 32.0f}, "Modify");
+    draw_toolbar_button({382.0f, 8.0f, 72.0f, 32.0f}, "View");
+
+    DrawRectangleRec(layout.inspector, Color{20, 25, 32, 255});
+    DrawLine(
+        static_cast<int>(layout.inspector.width - 1.0f),
+        static_cast<int>(layout.inspector.y),
+        static_cast<int>(layout.inspector.width - 1.0f),
+        static_cast<int>(layout.inspector.y + layout.inspector.height),
+        Color{69, 82, 99, 255}
+    );
+    DrawText("PROPERTIES", 16, 66, 13, Color{126, 139, 156, 255});
+
+    if (!has_selection) {
+        DrawText("Nothing selected", 16, 102, 16, Color{132, 143, 157, 255});
+        DrawText("Select a control point in the viewport", 16, 128, 13, Color{91, 103, 118, 255});
+    }
+}
+
 int main() {
     InitWindow(1280, 720, "Nurbsman");
+    SetWindowState(FLAG_WINDOW_RESIZABLE);
+    SetWindowMinSize(800, 500);
     SetTargetFPS(60);
 
     OrbitCameraController camera_controller(
@@ -90,7 +140,7 @@ int main() {
     surface->translate(Point3D{1.0, 0.0, 0.0});
 
     UILayer ui_layer;
-    auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(Vector2{20.0f, 58.0f});
+    auto* inspector = ui_layer.add_element<ControlPointInspectorPanel>(Vector2{10.0f, 92.0f});
 
     Scene scene;
     scene.add_entity("WaveSurface", std::move(surface));
@@ -104,14 +154,47 @@ int main() {
         [inspector] { inspector->clear_selection(); }
     );
 
+    EditorLayout layout = EditorLayout::calculate(GetScreenWidth(), GetScreenHeight());
+    RenderTexture2D viewport_target = LoadRenderTexture(
+        static_cast<int>(layout.viewport.width),
+        static_cast<int>(layout.viewport.height)
+    );
+    bool viewport_has_pointer_capture = false;
+
     while (!WindowShouldClose()) {
+        const EditorLayout next_layout = EditorLayout::calculate(GetScreenWidth(), GetScreenHeight());
+        if (next_layout.viewport.width != layout.viewport.width ||
+            next_layout.viewport.height != layout.viewport.height) {
+            UnloadRenderTexture(viewport_target);
+            viewport_target = LoadRenderTexture(
+                static_cast<int>(next_layout.viewport.width),
+                static_cast<int>(next_layout.viewport.height)
+            );
+        }
+        layout = next_layout;
+
         InputFrameSnapshot input = InputFrameSnapshot::capture_input_frame();
-        if (!ui_layer.handle_input(input)) {
-            input_dispatcher.dispatch(input, camera_controller, scene);
+        const bool ui_consumed_input = ui_layer.handle_input(input);
+        const bool pointer_in_viewport = CheckCollisionPointRec(input.mouse_position, layout.viewport);
+        if (!input.middle_mouse) {
+            viewport_has_pointer_capture = false;
+        } else if (pointer_in_viewport) {
+            viewport_has_pointer_capture = true;
         }
 
-        BeginDrawing();
-            ClearBackground(RAYWHITE);
+        if (!ui_consumed_input && (pointer_in_viewport || viewport_has_pointer_capture)) {
+            InputFrameSnapshot viewport_input = input;
+            viewport_input.mouse_position = {
+                input.mouse_position.x - layout.viewport.x,
+                input.mouse_position.y - layout.viewport.y
+            };
+            viewport_input.screen_width = static_cast<int>(layout.viewport.width);
+            viewport_input.screen_height = static_cast<int>(layout.viewport.height);
+            input_dispatcher.dispatch(viewport_input, camera_controller, scene);
+        }
+
+        BeginTextureMode(viewport_target);
+            ClearBackground(Color{16, 20, 26, 255});
             BeginMode3D(camera_controller.raw_camera());
                 DrawGrid(20, 1.0f);
 
@@ -122,17 +205,45 @@ int main() {
                     }
                 }
             EndMode3D();
+        EndTextureMode();
+
+        BeginDrawing();
+            ClearBackground(Color{16, 20, 26, 255});
+            DrawTexturePro(
+                viewport_target.texture,
+                Rectangle{
+                    0.0f,
+                    0.0f,
+                    static_cast<float>(viewport_target.texture.width),
+                    -static_cast<float>(viewport_target.texture.height)
+                },
+                layout.viewport,
+                Vector2{},
+                0.0f,
+                WHITE
+            );
+            draw_editor_chrome(layout, inspector->selected_point() != nullptr);
 
             DrawText(
-                "Left Click: Select Point | Middle Drag: Orbit | Shift + Middle Drag: Pan | Scroll: Zoom",
-                10, 10, 20, GRAY
+                "LMB Select   MMB Orbit   Shift + MMB Pan   Wheel Zoom",
+                static_cast<int>(layout.viewport.x + 14.0f),
+                static_cast<int>(layout.viewport.y + layout.viewport.height - 28.0f),
+                14,
+                Color{154, 165, 179, 255}
             );
             const char* fps_text = TextFormat("FPS: %d", GetFPS());
-            DrawText(fps_text, GetScreenWidth() - MeasureText(fps_text, 20) - 10, 10, 20, DARKGRAY);
+            DrawText(
+                fps_text,
+                GetScreenWidth() - MeasureText(fps_text, 15) - 16,
+                17,
+                15,
+                Color{154, 165, 179, 255}
+            );
             ui_layer.render();
         EndDrawing();
     }
 
+    UnloadRenderTexture(viewport_target);
     CloseWindow();
     return 0;
 }
