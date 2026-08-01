@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -64,14 +65,16 @@ EditorSession::EditorSession()
           Vec3{0.0f, 0.0f, 0.0f}
       ) {
     std::vector<ControlPoint> points = {
-        {{-4, 0, -4}, 1.0}, {{-1, 3, -4}, 1.0}, {{2, -2, -4}, 1.0},
-        {{-4, 1,  0}, 1.0}, {{-1, 5,  0}, 3.0}, {{2,  1,  0}, 1.0},
-        {{-4, 0,  4}, 1.0}, {{-1, 2,  4}, 1.0}, {{2,  0,  4}, 1.0}
+        {{-3, 0, -4}, 1.0}, {{0, 3, -4}, 1.0}, {{3, -2, -4}, 1.0},
+        {{-3, 1,  0}, 1.0}, {{0, 5,  0}, 3.0}, {{3,  1,  0}, 1.0},
+        {{-3, 0,  4}, 1.0}, {{0, 2,  4}, 1.0}, {{3,  0,  4}, 1.0}
     };
 
-    auto surface = std::make_unique<NurbsSurface>(3, 3, std::move(points));
-    surface->translate(Point3D{1.0, 0.0, 0.0});
-    (void)m_scene.add_entity("WaveSurface", std::move(surface));
+    auto surface = NurbsSurface::create(3, 3, std::move(points));
+    if (!surface.has_value()) {
+        throw std::logic_error("Failed to construct the default NURBS surface");
+    }
+    (void)m_scene.add_entity("WaveSurface", std::move(*surface));
 
     m_input_dispatcher.register_tools<CameraNavigationTool>();
     m_input_dispatcher.register_tools<ControlPointSelectionTool>(

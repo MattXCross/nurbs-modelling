@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <vector>
 #include <expected>
+#include <memory>
 #include <mdspan>
 #include <optional>
 #include <ranges>
@@ -11,8 +12,46 @@
 
 #include "core.h"
 
+enum class NurbsSurfaceErrorCode {
+    invalid_control_net_dimensions,
+    control_point_count_mismatch,
+    degree_out_of_range,
+    knot_count_mismatch,
+    non_finite_knot,
+    knots_not_nondecreasing,
+    knot_range_not_finite,
+    knot_multiplicity_exceeded,
+    empty_parameter_domain,
+    non_finite_control_point,
+    non_positive_weight,
+    numeric_range_not_supported
+};
+
+enum class NurbsParameterDirection { u, v };
+
+struct NurbsSurfaceError {
+    static constexpr size_t no_index = static_cast<size_t>(-1);
+
+    NurbsSurfaceErrorCode code;
+    std::optional<NurbsParameterDirection> direction{};
+    size_t index{no_index};
+};
+
 class NurbsSurface {
 private:
+    struct ValidatedTag {};
+
+    NurbsSurface(
+        ValidatedTag,
+        size_t u_count,
+        size_t v_count,
+        size_t u_degree,
+        size_t v_degree,
+        std::vector<ControlPoint> points,
+        std::vector<double> u_knots,
+        std::vector<double> v_knots
+    );
+
     size_t m_u_count{0};
     size_t m_v_count{0};
     size_t m_u_degree{0};
@@ -22,8 +61,13 @@ private:
     std::vector<double> m_v_knots;
 
 public:
-    NurbsSurface(size_t u_count, size_t v_count, std::vector<ControlPoint> points);
-    NurbsSurface(
+    [[nodiscard]] static std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> create(
+        size_t u_count,
+        size_t v_count,
+        std::vector<ControlPoint> points
+    );
+
+    [[nodiscard]] static std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> create(
         size_t u_count,
         size_t v_count,
         size_t u_degree,
@@ -34,8 +78,8 @@ public:
     );
 
     ~NurbsSurface() = default;
-    NurbsSurface(NurbsSurface&&) noexcept = default;
-    NurbsSurface& operator=(NurbsSurface&&) noexcept = default;
+    NurbsSurface(NurbsSurface&&) = delete;
+    NurbsSurface& operator=(NurbsSurface&&) = delete;
 
     NurbsSurface(const NurbsSurface&) = default;
     NurbsSurface& operator=(const NurbsSurface&) = default;
@@ -64,15 +108,6 @@ public:
                 control_point.weight
             };
         });
-    }
-
-    template<typename Self>
-    Self&& translate(this Self&& self, Point3D delta) {
-        for (auto& control_point : self.m_control_points) {
-            control_point.position = control_point.position + delta;
-        }
-
-        return std::forward<Self>(self);
     }
 
     [[nodiscard]] size_t u_count() const { return m_u_count; }
