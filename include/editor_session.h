@@ -28,6 +28,7 @@ public:
     void process_viewport_input(const InputFrameSnapshot& input);
     void set_change_handler(ChangeHandler handler);
 
+    [[nodiscard]] bool select_entity(EntitySelection selection);
     [[nodiscard]] bool select_control_point(ControlPointSelection selection);
     [[nodiscard]] bool clear_selection();
 

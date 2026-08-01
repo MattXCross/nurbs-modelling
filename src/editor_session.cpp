@@ -234,6 +234,23 @@ void EditorSession::set_change_handler(ChangeHandler handler) {
     m_change_handler = std::move(handler);
 }
 
+bool EditorSession::select_entity(EntitySelection selection) {
+    NotificationBatch notifications(*this);
+    if (m_scene.find_entity(selection.entity) == nullptr) {
+        return false;
+    }
+
+    const EntitySelection* current = m_selection.entity();
+    if (current != nullptr && current->entity == selection.entity) {
+        return false;
+    }
+
+    (void)cancel_pending_edit();
+    m_selection.select(selection);
+    notify(EditorChange{.selection = true});
+    return true;
+}
+
 bool EditorSession::select_control_point(ControlPointSelection selection) {
     NotificationBatch notifications(*this);
     if (m_scene.resolve(selection) == nullptr) {

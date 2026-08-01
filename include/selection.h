@@ -33,6 +33,10 @@ public:
         return std::get_if<ControlPointSelection>(&m_selection);
     }
 
+    [[nodiscard]] const EntitySelection* entity() const {
+        return std::get_if<EntitySelection>(&m_selection);
+    }
+
 private:
     Selection m_selection;
 };

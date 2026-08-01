@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include "qt_control_point_inspector.h"
+#include "qt_scene_outliner.h"
 #include "raylib_viewport_widget.h"
 
 #include <QAction>
@@ -27,12 +28,20 @@ MainWindow::MainWindow(QWidget* parent)
     m_viewport = new RaylibViewportWidget(m_session, this);
     setCentralWidget(m_viewport);
 
+    m_outliner_dock = new QDockWidget("Scene", this);
+    m_outliner_dock->setObjectName("sceneOutlinerDock");
+    m_outliner_dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_outliner = new SceneOutlinerWidget(m_session, m_outliner_dock);
+    m_outliner_dock->setWidget(m_outliner);
+    addDockWidget(Qt::LeftDockWidgetArea, m_outliner_dock);
+
     m_inspector_dock = new QDockWidget("Inspector", this);
     m_inspector_dock->setObjectName("inspectorDock");
     m_inspector_dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     m_inspector = new ControlPointInspectorWidget(m_session, m_inspector_dock);
     m_inspector_dock->setWidget(m_inspector);
     addDockWidget(Qt::LeftDockWidgetArea, m_inspector_dock);
+    splitDockWidget(m_outliner_dock, m_inspector_dock, Qt::Vertical);
 
     auto* quit_action = new QAction("Quit", this);
     quit_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Quit));
@@ -75,6 +84,7 @@ MainWindow::MainWindow(QWidget* parent)
     edit_menu->addAction(m_undo_action);
     edit_menu->addAction(m_redo_action);
     auto* view_menu = menuBar()->addMenu("View");
+    view_menu->addAction(m_outliner_dock->toggleViewAction());
     view_menu->addAction(m_inspector_dock->toggleViewAction());
     auto* help_menu = menuBar()->addMenu("Help");
     help_menu->addAction(about_action);
@@ -90,6 +100,7 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->addAction(m_undo_action);
     toolbar->addAction(m_redo_action);
     toolbar->addSeparator();
+    toolbar->addAction(m_outliner_dock->toggleViewAction());
     toolbar->addAction(m_inspector_dock->toggleViewAction());
 
     statusBar()->showMessage("LMB Select   MMB Orbit   Shift+MMB Pan   Wheel Zoom");
@@ -108,6 +119,11 @@ MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
     m_session.set_change_handler({});
 
+    removeDockWidget(m_outliner_dock);
+    delete m_outliner_dock;
+    m_outliner_dock = nullptr;
+    m_outliner = nullptr;
+
     removeDockWidget(m_inspector_dock);
     delete m_inspector_dock;
     m_inspector_dock = nullptr;
@@ -120,7 +136,8 @@ MainWindow::~MainWindow() {
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     const QWidget* active_window = QApplication::activeWindow();
     const bool editor_window_active =
-        active_window == this || active_window == m_inspector_dock;
+        active_window == this || active_window == m_outliner_dock ||
+        active_window == m_inspector_dock;
     if (editor_window_active && event->type() == QEvent::KeyPress) {
         auto* key_event = static_cast<QKeyEvent*>(event);
         if (key_event->matches(QKeySequence::Undo) && m_undo_action->isEnabled()) {
@@ -152,6 +169,9 @@ void MainWindow::redo() {
 }
 
 void MainWindow::handle_editor_change(EditorChange change) {
+    if (change.selection || change.entities) {
+        m_outliner->refresh();
+    }
     if (change.selection || change.properties) {
         m_inspector->refresh();
     }
@@ -168,12 +188,26 @@ void MainWindow::refresh_ui_state() {
     m_redo_action->setEnabled(m_session.can_redo());
 
     const ControlPointSelection* selection = m_session.selection().control_point();
-    if (selection == nullptr) {
+    if (selection != nullptr) {
+        const SceneNode* node = m_session.scene().find_entity(selection->entity);
+        const QString name = node == nullptr
+            ? QString("Unknown entity")
+            : QString::fromStdString(node->name);
+        m_selection_status->setText(QString("%1 / Control vertex U%2 : V%3")
+            .arg(name)
+            .arg(static_cast<qulonglong>(selection->u))
+            .arg(static_cast<qulonglong>(selection->v)));
+        return;
+    }
+
+    const EntitySelection* entity = m_session.selection().entity();
+    if (entity == nullptr) {
         m_selection_status->setText("Nothing selected");
         return;
     }
 
-    m_selection_status->setText(QString("Control vertex U%1 : V%2")
-        .arg(static_cast<qulonglong>(selection->u))
-        .arg(static_cast<qulonglong>(selection->v)));
+    const SceneNode* node = m_session.scene().find_entity(entity->entity);
+    m_selection_status->setText(node == nullptr
+        ? QString("Unknown entity")
+        : QString::fromStdString(node->name));
 }

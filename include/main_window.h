@@ -9,6 +9,7 @@ class QAction;
 class QDockWidget;
 class QLabel;
 class RaylibViewportWidget;
+class SceneOutlinerWidget;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -26,6 +27,8 @@ private:
 
     EditorSession m_session;
     RaylibViewportWidget* m_viewport{nullptr};
+    QDockWidget* m_outliner_dock{nullptr};
+    SceneOutlinerWidget* m_outliner{nullptr};
     QDockWidget* m_inspector_dock{nullptr};
     ControlPointInspectorWidget* m_inspector{nullptr};
     QAction* m_undo_action{nullptr};
