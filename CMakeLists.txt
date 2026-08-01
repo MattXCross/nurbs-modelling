@@ -9,8 +9,15 @@ include(FetchContent)
 FetchContent_Declare(
     raylib
     URL https://github.com/raysan5/raylib/archive/refs/tags/6.0.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(raylib)
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS
+    OpenGL
+    OpenGLWidgets
+    Widgets
+)
 
 add_library(cad_geometry STATIC
     src/nurbs_surface.cpp
@@ -58,6 +65,12 @@ enable_project_warnings(cad_editor)
 enable_project_warnings(cad_raylib)
 
 add_executable(cad_app main.cpp)
-target_link_libraries(cad_app PRIVATE cad_raylib raylib)
+target_link_libraries(cad_app PRIVATE
+    cad_raylib
+    raylib
+    Qt6::OpenGL
+    Qt6::OpenGLWidgets
+    Qt6::Widgets
+)
 
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT cad_app)
