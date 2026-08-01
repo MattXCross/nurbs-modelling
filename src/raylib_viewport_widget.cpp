@@ -4,9 +4,11 @@
 
 #include "rlgl.h"
 
+#include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLVersionFunctionsFactory>
+#include <QWheelEvent>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -24,12 +26,48 @@ void* load_opengl_function(const char* name) {
     return reinterpret_cast<void*>(context->getProcAddress(name));
 }
 
+ModifierKeys to_modifiers(Qt::KeyboardModifiers modifiers) {
+    return {
+        .shift = modifiers.testFlag(Qt::ShiftModifier),
+        .ctrl = modifiers.testFlag(Qt::ControlModifier),
+        .alt = modifiers.testFlag(Qt::AltModifier)
+    };
+}
+
+InputFrameSnapshot pointer_input(
+    QPointF position,
+    QPointF delta,
+    Qt::MouseButtons buttons,
+    Qt::KeyboardModifiers modifiers,
+    int viewport_width,
+    int viewport_height
+) {
+    return {
+        .mouse_position = {
+            static_cast<float>(position.x()),
+            static_cast<float>(position.y())
+        },
+        .mouse_delta = {
+            static_cast<float>(delta.x()),
+            static_cast<float>(delta.y())
+        },
+        .screen_width = viewport_width,
+        .screen_height = viewport_height,
+        .middle_mouse = buttons.testFlag(Qt::MiddleButton),
+        .left_mouse = buttons.testFlag(Qt::LeftButton),
+        .right_mouse = buttons.testFlag(Qt::RightButton),
+        .modifiers = to_modifiers(modifiers)
+    };
+}
+
 } // namespace
 
 RaylibViewportWidget::RaylibViewportWidget(EditorSession& session, QWidget* parent)
     : QOpenGLWidget(parent),
       m_session(session) {
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
+    setFocusPolicy(Qt::StrongFocus);
+    setMouseTracking(true);
 }
 
 RaylibViewportWidget::~RaylibViewportWidget() {
@@ -108,6 +146,86 @@ void RaylibViewportWidget::paintGL() {
         framebuffer_width,
         framebuffer_height
     );
+}
+
+void RaylibViewportWidget::mousePressEvent(QMouseEvent* event) {
+    m_last_pointer_position = event->position();
+    m_has_pointer_position = true;
+
+    InputFrameSnapshot input = pointer_input(
+        event->position(),
+        {},
+        event->buttons(),
+        event->modifiers(),
+        width(),
+        height()
+    );
+    input.left_mouse_pressed = event->button() == Qt::LeftButton;
+    dispatch_input(input);
+    event->accept();
+}
+
+void RaylibViewportWidget::mouseReleaseEvent(QMouseEvent* event) {
+    const QPointF delta = m_has_pointer_position
+        ? event->position() - m_last_pointer_position
+        : QPointF{};
+    m_last_pointer_position = event->position();
+    m_has_pointer_position = true;
+
+    InputFrameSnapshot input = pointer_input(
+        event->position(),
+        delta,
+        event->buttons(),
+        event->modifiers(),
+        width(),
+        height()
+    );
+    input.left_mouse_released = event->button() == Qt::LeftButton;
+    dispatch_input(input);
+    event->accept();
+}
+
+void RaylibViewportWidget::mouseMoveEvent(QMouseEvent* event) {
+    const QPointF delta = m_has_pointer_position
+        ? event->position() - m_last_pointer_position
+        : QPointF{};
+    m_last_pointer_position = event->position();
+    m_has_pointer_position = true;
+
+    dispatch_input(pointer_input(
+        event->position(),
+        delta,
+        event->buttons(),
+        event->modifiers(),
+        width(),
+        height()
+    ));
+    event->accept();
+}
+
+void RaylibViewportWidget::wheelEvent(QWheelEvent* event) {
+    InputFrameSnapshot input = pointer_input(
+        event->position(),
+        {},
+        event->buttons(),
+        event->modifiers(),
+        width(),
+        height()
+    );
+    if (!event->pixelDelta().isNull()) {
+        constexpr float pixels_per_zoom_step = 15.0f;
+        input.mouse_wheel_delta =
+            static_cast<float>(event->pixelDelta().y()) / pixels_per_zoom_step;
+    } else {
+        input.mouse_wheel_delta = static_cast<float>(event->angleDelta().y()) / 120.0f;
+    }
+    dispatch_input(input);
+    event->accept();
+}
+
+void RaylibViewportWidget::dispatch_input(InputFrameSnapshot input) {
+    (void)m_session.process_viewport_input(input);
+    update();
 }
 
 void RaylibViewportWidget::cleanup_gl() {
