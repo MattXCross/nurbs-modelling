@@ -13,7 +13,7 @@ EntityId Scene::add_entity(std::string name, std::unique_ptr<NurbsSurface> surfa
     return id;
 }
 
-SceneNode* Scene::find_entity(EntityId id) {
+SceneNode* Scene::find_entity_mutable(EntityId id) {
     const auto node = std::ranges::find(m_nodes, id, &SceneNode::id);
     return node == m_nodes.end() ? nullptr : &*node;
 }
@@ -21,28 +21,6 @@ SceneNode* Scene::find_entity(EntityId id) {
 const SceneNode* Scene::find_entity(EntityId id) const {
     const auto node = std::ranges::find(m_nodes, id, &SceneNode::id);
     return node == m_nodes.end() ? nullptr : &*node;
-}
-
-bool Scene::mark_geometry_modified(EntityId id) {
-    SceneNode* node = find_entity(id);
-    if (node == nullptr) {
-        return false;
-    }
-    ++node->geometry_revision;
-    return true;
-}
-
-ControlPoint* Scene::resolve(ControlPointSelection selection) {
-    SceneNode* node = find_entity(selection.entity);
-    if (node == nullptr || node->surface == nullptr) {
-        return nullptr;
-    }
-
-    auto control_net = node->surface->control_net_2d();
-    if (selection.u >= control_net.extent(0) || selection.v >= control_net.extent(1)) {
-        return nullptr;
-    }
-    return &control_net[selection.u, selection.v];
 }
 
 const ControlPoint* Scene::resolve(ControlPointSelection selection) const {
@@ -57,6 +35,32 @@ const ControlPoint* Scene::resolve(ControlPointSelection selection) const {
         return nullptr;
     }
     return &control_net[selection.u, selection.v];
+}
+
+std::expected<bool, SceneMutationError> Scene::set_control_point(
+    ControlPointSelection selection,
+    ControlPoint point
+) {
+    SceneNode* node = find_entity_mutable(selection.entity);
+    if (node == nullptr) {
+        return std::unexpected(SceneMutationError::entity_not_found);
+    }
+    if (node->surface == nullptr) {
+        return std::unexpected(SceneMutationError::geometry_not_found);
+    }
+
+    const auto changed = node->surface->set_control_point(
+        selection.u,
+        selection.v,
+        point
+    );
+    if (!changed.has_value()) {
+        return std::unexpected(SceneMutationError::invalid_control_point);
+    }
+    if (*changed) {
+        ++node->geometry_revision;
+    }
+    return *changed;
 }
 
 void Scene::render_visible_nodes() const {

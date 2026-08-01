@@ -143,31 +143,38 @@ bool EditorSession::can_redo() const {
     return !m_pending_edit.has_value() && m_history.can_redo();
 }
 
-void EditorSession::begin_control_point_edit(ControlPointField field) {
+bool EditorSession::begin_control_point_edit(ControlPointField field) {
     (void)cancel_pending_edit();
     const ControlPointSelection* selection = m_selection.control_point();
-    ControlPoint* point = selected_control_point_mutable();
+    const ControlPoint* point = selected_control_point();
     if (selection != nullptr && point != nullptr) {
         m_pending_edit = PendingEdit{*selection, field, field_value(*point, field)};
+        return true;
     }
+    return false;
 }
 
-void EditorSession::preview_control_point_edit(ControlPointField field, double value) {
+bool EditorSession::preview_control_point_edit(ControlPointField field, double value) {
     if (!m_pending_edit.has_value() || m_pending_edit->field != field) {
-        return;
+        return false;
     }
 
     const ControlPointSelection* selection = m_selection.control_point();
-    ControlPoint* point = selected_control_point_mutable();
+    const ControlPoint* point = selected_control_point();
     if (selection == nullptr || point == nullptr ||
         selection->entity != m_pending_edit->selection.entity ||
         selection->u != m_pending_edit->selection.u ||
         selection->v != m_pending_edit->selection.v) {
-        return;
+        return false;
     }
 
-    set_field_value(*point, field, value);
-    (void)m_scene.mark_geometry_modified(selection->entity);
+    ControlPoint updated = *point;
+    set_field_value(updated, field, value);
+    if (!m_scene.set_control_point(*selection, updated).has_value()) {
+        (void)cancel_pending_edit();
+        return false;
+    }
+    return true;
 }
 
 void EditorSession::finish_control_point_edit(ControlPointField field) {
@@ -178,7 +185,7 @@ void EditorSession::finish_control_point_edit(ControlPointField field) {
 
     const PendingEdit edit = *m_pending_edit;
     m_pending_edit.reset();
-    ControlPoint* point = m_scene.resolve(edit.selection);
+    const ControlPoint* point = m_scene.resolve(edit.selection);
     if (point == nullptr) {
         return;
     }
@@ -191,9 +198,10 @@ void EditorSession::finish_control_point_edit(ControlPointField field) {
     Scene* scene = &m_scene;
     m_history.record_applied(std::make_unique<AppliedValueCommand>(
         [scene, selection = edit.selection, field](double value) {
-            if (ControlPoint* selected = scene->resolve(selection)) {
-                set_field_value(*selected, field, value);
-                (void)scene->mark_geometry_modified(selection.entity);
+            if (const ControlPoint* selected = scene->resolve(selection)) {
+                ControlPoint updated = *selected;
+                set_field_value(updated, field, value);
+                (void)scene->set_control_point(selection, updated);
             }
         },
         edit.initial_value,
@@ -208,11 +216,12 @@ bool EditorSession::cancel_pending_edit() {
 
     const PendingEdit edit = *m_pending_edit;
     m_pending_edit.reset();
-    ControlPoint* point = m_scene.resolve(edit.selection);
+    const ControlPoint* point = m_scene.resolve(edit.selection);
     if (point != nullptr && field_value(*point, edit.field) != edit.initial_value) {
-        set_field_value(*point, edit.field, edit.initial_value);
-        (void)m_scene.mark_geometry_modified(edit.selection.entity);
-        return true;
+        ControlPoint updated = *point;
+        set_field_value(updated, edit.field, edit.initial_value);
+        const auto restored = m_scene.set_control_point(edit.selection, updated);
+        return restored.has_value() && *restored;
     }
     return false;
 }
@@ -225,11 +234,6 @@ bool EditorSession::pending_edit_has_preview() const {
     const ControlPoint* point = m_scene.resolve(m_pending_edit->selection);
     return point != nullptr &&
         field_value(*point, m_pending_edit->field) != m_pending_edit->initial_value;
-}
-
-ControlPoint* EditorSession::selected_control_point_mutable() {
-    const ControlPointSelection* selection = m_selection.control_point();
-    return selection == nullptr ? nullptr : m_scene.resolve(*selection);
 }
 
 const ControlPoint* EditorSession::selected_control_point() const {

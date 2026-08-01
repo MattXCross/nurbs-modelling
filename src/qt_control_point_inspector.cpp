@@ -107,11 +107,17 @@ void ControlPointInspectorWidget::refresh() {
 
 void ControlPointInspectorWidget::value_changed(std::size_t field_index, double value) {
     if (!m_editing[field_index]) {
-        m_session.begin_control_point_edit(fields[field_index]);
+        if (!m_session.begin_control_point_edit(fields[field_index])) {
+            refresh();
+            return;
+        }
         m_editing[field_index] = true;
     }
 
-    m_session.preview_control_point_edit(fields[field_index], value);
+    if (!m_session.preview_control_point_edit(fields[field_index], value)) {
+        m_editing[field_index] = false;
+        refresh();
+    }
     if (m_change_handler) {
         m_change_handler();
     }

@@ -12,6 +12,8 @@
 
 #include "core.h"
 
+class Scene;
+
 enum class NurbsSurfaceErrorCode {
     invalid_control_net_dimensions,
     control_point_count_mismatch,
@@ -24,7 +26,8 @@ enum class NurbsSurfaceErrorCode {
     empty_parameter_domain,
     non_finite_control_point,
     non_positive_weight,
-    numeric_range_not_supported
+    numeric_range_not_supported,
+    control_point_out_of_range
 };
 
 enum class NurbsParameterDirection { u, v };
@@ -39,6 +42,8 @@ struct NurbsSurfaceError {
 
 class NurbsSurface {
 private:
+    friend class Scene;
+
     struct ValidatedTag {};
 
     NurbsSurface(
@@ -50,6 +55,12 @@ private:
         std::vector<ControlPoint> points,
         std::vector<double> u_knots,
         std::vector<double> v_knots
+    );
+
+    [[nodiscard]] std::expected<bool, NurbsSurfaceError> set_control_point(
+        size_t u,
+        size_t v,
+        ControlPoint point
     );
 
     size_t m_u_count{0};
@@ -81,12 +92,8 @@ public:
     NurbsSurface(NurbsSurface&&) = delete;
     NurbsSurface& operator=(NurbsSurface&&) = delete;
 
-    NurbsSurface(const NurbsSurface&) = default;
-    NurbsSurface& operator=(const NurbsSurface&) = default;
-
-    [[nodiscard]] auto control_net_2d() {
-        return std::mdspan(m_control_points.data(), m_u_count, m_v_count);
-    }
+    NurbsSurface(const NurbsSurface&) = delete;
+    NurbsSurface& operator=(const NurbsSurface&) = delete;
 
     [[nodiscard]] auto control_net_2d() const {
         return std::mdspan(m_control_points.data(), m_u_count, m_v_count);

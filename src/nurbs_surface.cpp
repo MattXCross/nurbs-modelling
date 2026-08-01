@@ -14,6 +14,57 @@
 
 namespace {
 
+std::optional<NurbsSurfaceError> validate_control_point(
+    const ControlPoint& point,
+    size_t index,
+    long double accumulator_limit
+) {
+    if (!std::isfinite(point.position.x) ||
+        !std::isfinite(point.position.y) ||
+        !std::isfinite(point.position.z) ||
+        !std::isfinite(point.weight)) {
+        return NurbsSurfaceError{
+            NurbsSurfaceErrorCode::non_finite_control_point,
+            std::nullopt,
+            index
+        };
+    }
+    if (point.weight <= 0.0) {
+        return NurbsSurfaceError{
+            NurbsSurfaceErrorCode::non_positive_weight,
+            std::nullopt,
+            index
+        };
+    }
+
+    if (static_cast<long double>(point.weight) > accumulator_limit) {
+        return NurbsSurfaceError{
+            NurbsSurfaceErrorCode::numeric_range_not_supported,
+            std::nullopt,
+            index
+        };
+    }
+    for (const double coordinate : {
+             point.position.x,
+             point.position.y,
+             point.position.z
+         }) {
+        const long double homogeneous_coordinate =
+            static_cast<long double>(coordinate) *
+            static_cast<long double>(point.weight);
+        if (!std::isfinite(homogeneous_coordinate) ||
+            std::abs(homogeneous_coordinate) > accumulator_limit) {
+            return NurbsSurfaceError{
+                NurbsSurfaceErrorCode::numeric_range_not_supported,
+                std::nullopt,
+                index
+            };
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::optional<NurbsSurfaceError> validate_control_net(
     size_t u_count,
     size_t v_count,
@@ -28,59 +79,26 @@ std::optional<NurbsSurfaceError> validate_control_net(
         return NurbsSurfaceError{NurbsSurfaceErrorCode::control_point_count_mismatch};
     }
 
-    long double maximum_weight = 0.0L;
-    long double maximum_homogeneous_coordinate = 0.0L;
-    for (size_t index = 0; index < points.size(); ++index) {
-        const ControlPoint& point = points[index];
-        if (!std::isfinite(point.position.x) ||
-            !std::isfinite(point.position.y) ||
-            !std::isfinite(point.position.z) ||
-            !std::isfinite(point.weight)) {
-            return NurbsSurfaceError{
-                NurbsSurfaceErrorCode::non_finite_control_point,
-                std::nullopt,
-                index
-            };
-        }
-        if (point.weight <= 0.0) {
-            return NurbsSurfaceError{
-                NurbsSurfaceErrorCode::non_positive_weight,
-                std::nullopt,
-                index
-            };
-        }
-
-        maximum_weight = std::max(maximum_weight, static_cast<long double>(point.weight));
-        for (const double coordinate : {
-                 point.position.x,
-                 point.position.y,
-                 point.position.z
-             }) {
-            const long double homogeneous_coordinate =
-                static_cast<long double>(coordinate) *
-                static_cast<long double>(point.weight);
-            if (!std::isfinite(homogeneous_coordinate)) {
-                return NurbsSurfaceError{
-                    NurbsSurfaceErrorCode::numeric_range_not_supported,
-                    std::nullopt,
-                    index
-                };
-            }
-            maximum_homogeneous_coordinate = std::max(
-                maximum_homogeneous_coordinate,
-                std::abs(homogeneous_coordinate)
-            );
-        }
-    }
-
     const long double accumulator_limit = std::numeric_limits<long double>::max() /
         static_cast<long double>(points.size());
-    if (maximum_weight > accumulator_limit ||
-        maximum_homogeneous_coordinate > accumulator_limit) {
-        return NurbsSurfaceError{NurbsSurfaceErrorCode::numeric_range_not_supported};
+    for (size_t index = 0; index < points.size(); ++index) {
+        if (const auto error = validate_control_point(
+                points[index],
+                index,
+                accumulator_limit
+            )) {
+            return error;
+        }
     }
 
     return std::nullopt;
+}
+
+bool same_control_point(const ControlPoint& left, const ControlPoint& right) {
+    return left.position.x == right.position.x &&
+        left.position.y == right.position.y &&
+        left.position.z == right.position.z &&
+        left.weight == right.weight;
 }
 
 std::optional<NurbsSurfaceError> validate_knots(
@@ -317,6 +335,33 @@ NurbsSurface::NurbsSurface(
       m_control_points(std::move(points)),
       m_u_knots(std::move(u_knots)),
       m_v_knots(std::move(v_knots)) {}
+
+std::expected<bool, NurbsSurfaceError> NurbsSurface::set_control_point(
+    size_t u,
+    size_t v,
+    ControlPoint point
+) {
+    if (u >= m_u_count || v >= m_v_count) {
+        return std::unexpected(NurbsSurfaceError{
+            NurbsSurfaceErrorCode::control_point_out_of_range
+        });
+    }
+
+    ControlPoint& current = m_control_points[u * m_v_count + v];
+    if (same_control_point(current, point)) {
+        return false;
+    }
+
+    const size_t index = u * m_v_count + v;
+    const long double accumulator_limit = std::numeric_limits<long double>::max() /
+        static_cast<long double>(m_control_points.size());
+    if (const auto error = validate_control_point(point, index, accumulator_limit)) {
+        return std::unexpected(*error);
+    }
+
+    current = point;
+    return true;
+}
 
 std::vector<double> NurbsSurface::make_open_uniform_knots(size_t control_count, size_t degree) {
     if (control_count == 0 || degree >= control_count ||

@@ -30,8 +30,8 @@ public:
     [[nodiscard]] bool can_undo() const;
     [[nodiscard]] bool can_redo() const;
 
-    void begin_control_point_edit(ControlPointField field);
-    void preview_control_point_edit(ControlPointField field, double value);
+    [[nodiscard]] bool begin_control_point_edit(ControlPointField field);
+    [[nodiscard]] bool preview_control_point_edit(ControlPointField field, double value);
     void finish_control_point_edit(ControlPointField field);
 
     [[nodiscard]] const Scene& scene() const { return m_scene; }
@@ -48,7 +48,6 @@ private:
 
     [[nodiscard]] bool cancel_pending_edit();
     [[nodiscard]] bool pending_edit_has_preview() const;
-    [[nodiscard]] ControlPoint* selected_control_point_mutable();
 
     Scene m_scene;
     SelectionModel m_selection;

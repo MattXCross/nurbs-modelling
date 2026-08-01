@@ -110,10 +110,10 @@ void ControlPointSelectionTool::process_input(
             continue;
         }
 
-        auto control_net = node.surface->control_net_2d();
+        const auto control_net = node.surface->control_net_2d();
         for (size_t u = 0; u < control_net.extent(0); ++u) {
             for (size_t v = 0; v < control_net.extent(1); ++v) {
-                ControlPoint& point = control_net[u, v];
+                const ControlPoint& point = control_net[u, v];
                 const Vec3 world_position = to_vec3(point.position);
                 const float depth =
                     (world_position.x - camera.position.x) * camera_forward.x +
