@@ -1,5 +1,7 @@
 #include "main_window.h"
 
+#include "raylib_viewport_widget.h"
+
 #include <QAction>
 #include <QDockWidget>
 #include <QLabel>
@@ -9,31 +11,6 @@
 #include <QWidget>
 
 namespace {
-
-QWidget* create_viewport_placeholder(QWidget* parent) {
-    auto* viewport = new QWidget(parent);
-    viewport->setObjectName("viewportPlaceholder");
-    viewport->setStyleSheet(
-        "#viewportPlaceholder { background-color: #10141a; }"
-        "#viewportTitle { color: #d7dee8; font-size: 18px; font-weight: 600; }"
-        "#viewportMessage { color: #8995a5; }"
-    );
-
-    auto* title = new QLabel("Raylib viewport", viewport);
-    title->setObjectName("viewportTitle");
-    title->setAlignment(Qt::AlignCenter);
-
-    auto* message = new QLabel("Viewport integration pending", viewport);
-    message->setObjectName("viewportMessage");
-    message->setAlignment(Qt::AlignCenter);
-
-    auto* layout = new QVBoxLayout(viewport);
-    layout->addStretch();
-    layout->addWidget(title);
-    layout->addWidget(message);
-    layout->addStretch();
-    return viewport;
-}
 
 QWidget* create_inspector_placeholder(QWidget* parent) {
     auto* inspector = new QWidget(parent);
@@ -62,7 +39,7 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->addAction("Modify");
     toolbar->addAction("View");
 
-    setCentralWidget(create_viewport_placeholder(this));
+    setCentralWidget(new RaylibViewportWidget(m_session, this));
 
     auto* inspector_dock = new QDockWidget("Inspector", this);
     inspector_dock->setObjectName("inspectorDock");

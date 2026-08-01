@@ -67,11 +67,16 @@ enable_project_warnings(cad_raylib)
 
 add_library(cad_qt_ui STATIC
     src/main_window.cpp
+    src/raylib_viewport_widget.cpp
 )
 target_include_directories(cad_qt_ui PUBLIC include)
 target_link_libraries(cad_qt_ui PUBLIC
     cad_editor
+    Qt6::OpenGLWidgets
     Qt6::Widgets
+    PRIVATE
+    cad_raylib
+    raylib
 )
 enable_project_warnings(cad_qt_ui)
 
