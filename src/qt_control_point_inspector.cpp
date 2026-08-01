@@ -7,7 +7,6 @@
 #include <QVBoxLayout>
 
 #include <array>
-#include <utility>
 
 namespace {
 
@@ -73,10 +72,6 @@ ControlPointInspectorWidget::ControlPointInspectorWidget(
     refresh();
 }
 
-void ControlPointInspectorWidget::set_change_handler(ChangeHandler handler) {
-    m_change_handler = std::move(handler);
-}
-
 void ControlPointInspectorWidget::refresh() {
     m_editing.fill(false);
     const ControlPointSelection* selection = m_session.selection().control_point();
@@ -118,9 +113,6 @@ void ControlPointInspectorWidget::value_changed(std::size_t field_index, double 
         m_editing[field_index] = false;
         refresh();
     }
-    if (m_change_handler) {
-        m_change_handler();
-    }
 }
 
 void ControlPointInspectorWidget::editing_finished(std::size_t field_index) {
@@ -130,7 +122,4 @@ void ControlPointInspectorWidget::editing_finished(std::size_t field_index) {
 
     m_session.finish_control_point_edit(fields[field_index]);
     m_editing[field_index] = false;
-    if (m_change_handler) {
-        m_change_handler();
-    }
 }

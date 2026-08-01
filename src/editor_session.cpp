@@ -185,6 +185,16 @@ bool selection_references_entity(const Selection& selection, EntityId entity) {
 
 } // namespace
 
+EditorSession::NotificationBatch::NotificationBatch(EditorSession& session)
+    : m_session(session) {
+    ++m_session.m_notification_depth;
+}
+
+EditorSession::NotificationBatch::~NotificationBatch() {
+    --m_session.m_notification_depth;
+    m_session.flush_notifications();
+}
+
 EditorSession::EditorSession()
     : m_camera_controller(
           Vec3{10.0f, 10.0f, 10.0f},
@@ -215,13 +225,17 @@ EditorSession::EditorSession()
     );
 }
 
-bool EditorSession::process_viewport_input(const InputFrameSnapshot& input) {
-    m_selection_changed = false;
+void EditorSession::process_viewport_input(const InputFrameSnapshot& input) {
+    NotificationBatch notifications(*this);
     m_input_dispatcher.dispatch(input, m_camera_controller, m_scene);
-    return m_selection_changed;
+}
+
+void EditorSession::set_change_handler(ChangeHandler handler) {
+    m_change_handler = std::move(handler);
 }
 
 bool EditorSession::select_control_point(ControlPointSelection selection) {
+    NotificationBatch notifications(*this);
     if (m_scene.resolve(selection) == nullptr) {
         return false;
     }
@@ -234,33 +248,56 @@ bool EditorSession::select_control_point(ControlPointSelection selection) {
 
     (void)cancel_pending_edit();
     m_selection.select(selection);
-    m_selection_changed = true;
+    notify(EditorChange{.selection = true});
     return true;
 }
 
 bool EditorSession::clear_selection() {
+    NotificationBatch notifications(*this);
     if (m_selection.empty()) {
         return false;
     }
 
     (void)cancel_pending_edit();
     m_selection.clear();
-    m_selection_changed = true;
+    notify(EditorChange{.selection = true});
     return true;
 }
 
 bool EditorSession::undo() {
+    NotificationBatch notifications(*this);
     if (cancel_pending_edit()) {
         return true;
     }
-    return m_history.undo();
+    if (!m_history.undo()) {
+        return false;
+    }
+    notify(EditorChange{
+        .selection = true,
+        .entities = true,
+        .geometry = true,
+        .properties = true,
+        .history = true
+    });
+    return true;
 }
 
 bool EditorSession::redo() {
+    NotificationBatch notifications(*this);
     if (m_pending_edit.has_value()) {
         return false;
     }
-    return m_history.redo();
+    if (!m_history.redo()) {
+        return false;
+    }
+    notify(EditorChange{
+        .selection = true,
+        .entities = true,
+        .geometry = true,
+        .properties = true,
+        .history = true
+    });
+    return true;
 }
 
 bool EditorSession::can_undo() const {
@@ -275,6 +312,7 @@ std::expected<EntityId, SceneMutationError> EditorSession::create_surface_entity
     std::string name,
     std::unique_ptr<NurbsSurface> surface
 ) {
+    NotificationBatch notifications(*this);
     auto entity = m_scene.add_entity(std::move(name), std::move(surface));
     if (!entity.has_value()) {
         return std::unexpected(entity.error());
@@ -286,10 +324,12 @@ std::expected<EntityId, SceneMutationError> EditorSession::create_surface_entity
         *entity,
         [this](EntityId removed) { clear_selection_for_entity(removed); }
     ));
+    notify(EditorChange{.entities = true, .geometry = true, .history = true});
     return *entity;
 }
 
 std::expected<bool, SceneMutationError> EditorSession::delete_entity(EntityId id) {
+    NotificationBatch notifications(*this);
     if (m_scene.find_entity(id) == nullptr) {
         return std::unexpected(SceneMutationError::entity_not_found);
     }
@@ -306,6 +346,7 @@ std::expected<bool, SceneMutationError> EditorSession::delete_entity(EntityId id
         std::move(*removed),
         [this](EntityId removed_id) { clear_selection_for_entity(removed_id); }
     ));
+    notify(EditorChange{.entities = true, .geometry = true, .history = true});
     return true;
 }
 
@@ -313,6 +354,7 @@ std::expected<bool, SceneMutationError> EditorSession::rename_entity(
     EntityId id,
     std::string name
 ) {
+    NotificationBatch notifications(*this);
     const SceneNode* node = m_scene.find_entity(id);
     if (node == nullptr) {
         return std::unexpected(SceneMutationError::entity_not_found);
@@ -333,6 +375,7 @@ std::expected<bool, SceneMutationError> EditorSession::rename_entity(
         std::move(initial_name),
         std::move(name)
     ));
+    notify(EditorChange{.entities = true, .history = true});
     return *renamed;
 }
 
@@ -340,6 +383,7 @@ std::expected<bool, SceneMutationError> EditorSession::set_entity_visibility(
     EntityId id,
     bool visible
 ) {
+    NotificationBatch notifications(*this);
     const SceneNode* node = m_scene.find_entity(id);
     if (node == nullptr) {
         return std::unexpected(SceneMutationError::entity_not_found);
@@ -360,21 +404,25 @@ std::expected<bool, SceneMutationError> EditorSession::set_entity_visibility(
         initial_visibility,
         visible
     ));
+    notify(EditorChange{.entities = true, .geometry = true, .history = true});
     return *changed;
 }
 
 bool EditorSession::begin_control_point_edit(ControlPointField field) {
+    NotificationBatch notifications(*this);
     (void)cancel_pending_edit();
     const ControlPointSelection* selection = m_selection.control_point();
     const ControlPoint* point = selected_control_point();
     if (selection != nullptr && point != nullptr) {
         m_pending_edit = PendingEdit{*selection, field, field_value(*point, field)};
+        notify(EditorChange{.history = true});
         return true;
     }
     return false;
 }
 
 bool EditorSession::preview_control_point_edit(ControlPointField field, double value) {
+    NotificationBatch notifications(*this);
     if (!m_pending_edit.has_value() || m_pending_edit->field != field) {
         return false;
     }
@@ -394,10 +442,12 @@ bool EditorSession::preview_control_point_edit(ControlPointField field, double v
         (void)cancel_pending_edit();
         return false;
     }
+    notify(EditorChange{.geometry = true, .history = true});
     return true;
 }
 
 void EditorSession::finish_control_point_edit(ControlPointField field) {
+    NotificationBatch notifications(*this);
     if (!m_pending_edit.has_value() || m_pending_edit->field != field) {
         (void)cancel_pending_edit();
         return;
@@ -407,11 +457,13 @@ void EditorSession::finish_control_point_edit(ControlPointField field) {
     m_pending_edit.reset();
     const ControlPoint* point = m_scene.resolve(edit.selection);
     if (point == nullptr) {
+        notify(EditorChange{.history = true});
         return;
     }
 
     const double final_value = field_value(*point, field);
     if (final_value == edit.initial_value) {
+        notify(EditorChange{.history = true});
         return;
     }
 
@@ -428,6 +480,7 @@ void EditorSession::finish_control_point_edit(ControlPointField field) {
         edit.initial_value,
         final_value
     ));
+    notify(EditorChange{.history = true});
 }
 
 bool EditorSession::cancel_pending_edit() {
@@ -442,8 +495,15 @@ bool EditorSession::cancel_pending_edit() {
         ControlPoint updated = *point;
         set_field_value(updated, edit.field, edit.initial_value);
         const auto restored = m_scene.set_control_point(edit.selection, updated);
-        return restored.has_value() && *restored;
+        const bool changed = restored.has_value() && *restored;
+        notify(EditorChange{
+            .geometry = changed,
+            .properties = changed,
+            .history = true
+        });
+        return changed;
     }
+    notify(EditorChange{.history = true});
     return false;
 }
 
@@ -465,6 +525,25 @@ const ControlPoint* EditorSession::selected_control_point() const {
 void EditorSession::clear_selection_for_entity(EntityId id) {
     if (selection_references_entity(m_selection.current(), id)) {
         m_selection.clear();
-        m_selection_changed = true;
+        notify(EditorChange{.selection = true});
     }
+}
+
+void EditorSession::notify(EditorChange change) {
+    m_pending_change.merge(change);
+    flush_notifications();
+}
+
+void EditorSession::flush_notifications() {
+    if (m_notification_depth != 0 || m_notifying || !m_change_handler) {
+        return;
+    }
+
+    m_notifying = true;
+    while (!m_pending_change.empty() && m_change_handler) {
+        const EditorChange change = m_pending_change;
+        m_pending_change = {};
+        m_change_handler(change);
+    }
+    m_notifying = false;
 }

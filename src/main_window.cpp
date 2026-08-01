@@ -15,7 +15,6 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QPointer>
 #include <QStatusBar>
 #include <QToolBar>
 
@@ -97,24 +96,8 @@ MainWindow::MainWindow(QWidget* parent)
     m_selection_status = new QLabel(statusBar());
     statusBar()->addPermanentWidget(m_selection_status);
 
-    const QPointer inspector_guard(m_inspector);
-    const QPointer window_guard(this);
-    m_viewport->set_selection_changed_handler([inspector_guard, window_guard] {
-        if (inspector_guard != nullptr) {
-            inspector_guard->refresh();
-        }
-        if (window_guard != nullptr) {
-            window_guard->refresh_ui_state();
-        }
-    });
-    const QPointer viewport_guard(m_viewport);
-    m_inspector->set_change_handler([viewport_guard, window_guard] {
-        if (viewport_guard != nullptr) {
-            viewport_guard->update();
-        }
-        if (window_guard != nullptr) {
-            window_guard->refresh_ui_state();
-        }
+    m_session.set_change_handler([this](EditorChange change) {
+        handle_editor_change(change);
     });
 
     refresh_ui_state();
@@ -123,8 +106,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
-    m_viewport->set_selection_changed_handler({});
-    m_inspector->set_change_handler({});
+    m_session.set_change_handler({});
 
     removeDockWidget(m_inspector_dock);
     delete m_inspector_dock;
@@ -162,19 +144,23 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void MainWindow::undo() {
-    if (m_session.undo()) {
-        m_inspector->refresh();
-        m_viewport->update();
-    }
-    refresh_ui_state();
+    (void)m_session.undo();
 }
 
 void MainWindow::redo() {
-    if (m_session.redo()) {
+    (void)m_session.redo();
+}
+
+void MainWindow::handle_editor_change(EditorChange change) {
+    if (change.selection || change.properties) {
         m_inspector->refresh();
+    }
+    if (change.selection || change.entities || change.geometry) {
         m_viewport->update();
     }
-    refresh_ui_state();
+    if (change.selection || change.history) {
+        refresh_ui_state();
+    }
 }
 
 void MainWindow::refresh_ui_state() {

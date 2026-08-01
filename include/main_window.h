@@ -21,6 +21,7 @@ protected:
 private:
     void undo();
     void redo();
+    void handle_editor_change(EditorChange change);
     void refresh_ui_state();
 
     EditorSession m_session;

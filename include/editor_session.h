@@ -1,17 +1,21 @@
 #pragma once
 
 #include "command_history.h"
+#include "editor_change.h"
 #include "input_frame.h"
 #include "input_tools.h"
 #include "orbit_camera.h"
 #include "scene.h"
 #include "selection.h"
 
+#include <functional>
 #include <optional>
 #include <string>
 
 class EditorSession {
 public:
+    using ChangeHandler = std::move_only_function<void(EditorChange)>;
+
     enum class ControlPointField { position_x, position_y, position_z, weight };
 
     EditorSession();
@@ -21,7 +25,8 @@ public:
     EditorSession(EditorSession&&) = delete;
     EditorSession& operator=(EditorSession&&) = delete;
 
-    [[nodiscard]] bool process_viewport_input(const InputFrameSnapshot& input);
+    void process_viewport_input(const InputFrameSnapshot& input);
+    void set_change_handler(ChangeHandler handler);
 
     [[nodiscard]] bool select_control_point(ControlPointSelection selection);
     [[nodiscard]] bool clear_selection();
@@ -55,6 +60,18 @@ public:
     [[nodiscard]] const ControlPoint* selected_control_point() const;
 
 private:
+    class NotificationBatch {
+    public:
+        explicit NotificationBatch(EditorSession& session);
+        ~NotificationBatch();
+
+        NotificationBatch(const NotificationBatch&) = delete;
+        NotificationBatch& operator=(const NotificationBatch&) = delete;
+
+    private:
+        EditorSession& m_session;
+    };
+
     struct PendingEdit {
         ControlPointSelection selection;
         ControlPointField field;
@@ -64,12 +81,17 @@ private:
     [[nodiscard]] bool cancel_pending_edit();
     [[nodiscard]] bool pending_edit_has_preview() const;
     void clear_selection_for_entity(EntityId id);
+    void notify(EditorChange change);
+    void flush_notifications();
 
     Scene m_scene;
     SelectionModel m_selection;
     CommandHistory m_history;
     OrbitCameraController m_camera_controller;
     InputToolDispatcher m_input_dispatcher;
+    ChangeHandler m_change_handler;
+    EditorChange m_pending_change;
     std::optional<PendingEdit> m_pending_edit;
-    bool m_selection_changed{false};
+    std::size_t m_notification_depth{0};
+    bool m_notifying{false};
 };
