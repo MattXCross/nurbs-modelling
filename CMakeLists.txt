@@ -34,6 +34,7 @@ target_link_libraries(cad_document PUBLIC cad_geometry)
 add_library(cad_editor STATIC
     src/editor_chrome.cpp
     src/editor_layout.cpp
+    src/editor_session.cpp
     src/input_tools.cpp
     src/ui/ui_widgets.cpp
     src/ui/ui_panel.cpp
