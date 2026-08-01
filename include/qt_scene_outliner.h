@@ -5,6 +5,7 @@
 #include <QTreeWidget>
 
 class QTreeWidgetItem;
+class QContextMenuEvent;
 class QEvent;
 class QModelIndex;
 
@@ -13,9 +14,11 @@ public:
     explicit SceneOutlinerWidget(EditorSession& session, QWidget* parent = nullptr);
 
     void refresh();
+    void edit_selected_name();
 
 protected:
     bool edit(const QModelIndex& index, EditTrigger trigger, QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void current_item_changed(QTreeWidgetItem* current);

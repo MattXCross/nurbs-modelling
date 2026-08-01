@@ -83,6 +83,14 @@ public:
         size_t v_count,
         size_t u_degree,
         size_t v_degree,
+        std::vector<ControlPoint> points
+    );
+
+    [[nodiscard]] static std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> create(
+        size_t u_count,
+        size_t v_count,
+        size_t u_degree,
+        size_t v_degree,
         std::vector<ControlPoint> points,
         std::vector<double> u_knots,
         std::vector<double> v_knots

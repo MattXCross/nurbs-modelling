@@ -282,6 +282,27 @@ std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> NurbsSurface::cr
     size_t v_count,
     size_t u_degree,
     size_t v_degree,
+    std::vector<ControlPoint> points
+) {
+    if (const auto error = validate_control_net(u_count, v_count, points)) {
+        return std::unexpected(*error);
+    }
+    return create(
+        u_count,
+        v_count,
+        u_degree,
+        v_degree,
+        std::move(points),
+        make_open_uniform_knots(u_count, u_degree),
+        make_open_uniform_knots(v_count, v_degree)
+    );
+}
+
+std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> NurbsSurface::create(
+    size_t u_count,
+    size_t v_count,
+    size_t u_degree,
+    size_t v_degree,
     std::vector<ControlPoint> points,
     std::vector<double> u_knots,
     std::vector<double> v_knots

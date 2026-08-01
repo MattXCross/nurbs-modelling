@@ -1,5 +1,6 @@
 #include "qt_scene_outliner.h"
 
+#include <QContextMenuEvent>
 #include <QHeaderView>
 #include <QMetaObject>
 #include <QSignalBlocker>
@@ -60,6 +61,17 @@ bool SceneOutlinerWidget::edit(
     return QTreeWidget::edit(index, trigger, event);
 }
 
+void SceneOutlinerWidget::contextMenuEvent(QContextMenuEvent* event) {
+    if (QTreeWidgetItem* item = itemAt(event->pos())) {
+        setCurrentItem(item);
+        current_item_changed(item);
+    } else {
+        setCurrentItem(nullptr);
+        current_item_changed(nullptr);
+    }
+    QTreeWidget::contextMenuEvent(event);
+}
+
 void SceneOutlinerWidget::refresh() {
     if (m_handling_change) {
         request_deferred_refresh();
@@ -98,6 +110,12 @@ void SceneOutlinerWidget::refresh() {
     setCurrentItem(selected_item);
     if (selected_item == nullptr) {
         clearSelection();
+    }
+}
+
+void SceneOutlinerWidget::edit_selected_name() {
+    if (QTreeWidgetItem* item = currentItem()) {
+        editItem(item, name_column);
     }
 }
 

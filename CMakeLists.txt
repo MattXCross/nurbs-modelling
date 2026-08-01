@@ -59,6 +59,7 @@ enable_project_warnings(cad_raylib_renderer)
 
 add_library(cad_qt_ui STATIC
     src/main_window.cpp
+    src/qt_create_surface_dialog.cpp
     src/qt_control_point_inspector.cpp
     src/qt_scene_outliner.cpp
     src/raylib_viewport_widget.cpp

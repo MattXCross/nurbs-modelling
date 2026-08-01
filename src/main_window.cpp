@@ -1,5 +1,6 @@
 #include "main_window.h"
 
+#include "qt_create_surface_dialog.h"
 #include "qt_control_point_inspector.h"
 #include "qt_scene_outliner.h"
 #include "raylib_viewport_widget.h"
@@ -8,6 +9,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QDockWidget>
+#include <QDialog>
 #include <QEvent>
 #include <QIcon>
 #include <QKeySequence>
@@ -18,6 +20,30 @@
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QToolBar>
+
+#include <algorithm>
+#include <string>
+#include <vector>
+
+namespace {
+
+std::vector<ControlPoint> make_flat_control_net(std::size_t u_count, std::size_t v_count) {
+    constexpr double surface_size = 6.0;
+    std::vector<ControlPoint> points;
+    points.reserve(u_count * v_count);
+    for (std::size_t u = 0; u < u_count; ++u) {
+        const double x = -surface_size * 0.5 + surface_size *
+            static_cast<double>(u) / static_cast<double>(u_count - 1);
+        for (std::size_t v = 0; v < v_count; ++v) {
+            const double z = -surface_size * 0.5 + surface_size *
+                static_cast<double>(v) / static_cast<double>(v_count - 1);
+            points.push_back(ControlPoint{{x, 0.0, z}, 1.0});
+        }
+    }
+    return points;
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -62,12 +88,36 @@ MainWindow::MainWindow(QWidget* parent)
     tool_group->setExclusive(true);
     tool_group->addAction(select_action);
 
-    auto* create_action = new QAction("Create", this);
-    create_action->setEnabled(false);
-    create_action->setToolTip("Create tools are not available yet");
-    auto* modify_action = new QAction("Modify", this);
-    modify_action->setEnabled(false);
-    modify_action->setToolTip("Modify tools are not available yet");
+    m_create_surface_action = new QAction(
+        QIcon::fromTheme("list-add"),
+        "Create Surface",
+        this
+    );
+    connect(m_create_surface_action, &QAction::triggered, this, [this] { create_surface(); });
+
+    m_delete_entity_action = new QAction(
+        QIcon::fromTheme("edit-delete"),
+        "Delete",
+        this
+    );
+    m_delete_entity_action->setShortcut(QKeySequence::Delete);
+    connect(m_delete_entity_action, &QAction::triggered, this,
+        [this] { delete_selected_entity(); });
+
+    m_rename_entity_action = new QAction("Rename", this);
+    m_rename_entity_action->setShortcut(QKeySequence(Qt::Key_F2));
+    connect(m_rename_entity_action, &QAction::triggered, this,
+        [this] { rename_selected_entity(); });
+
+    m_toggle_visibility_action = new QAction("Hide", this);
+    connect(m_toggle_visibility_action, &QAction::triggered, this,
+        [this] { toggle_selected_entity_visibility(); });
+
+    m_outliner->setContextMenuPolicy(Qt::ActionsContextMenu);
+    m_outliner->addAction(m_create_surface_action);
+    m_outliner->addAction(m_rename_entity_action);
+    m_outliner->addAction(m_toggle_visibility_action);
+    m_outliner->addAction(m_delete_entity_action);
 
     auto* about_action = new QAction("About Nurbsman", this);
     connect(about_action, &QAction::triggered, this, [this] {
@@ -83,6 +133,12 @@ MainWindow::MainWindow(QWidget* parent)
     auto* edit_menu = menuBar()->addMenu("Edit");
     edit_menu->addAction(m_undo_action);
     edit_menu->addAction(m_redo_action);
+    edit_menu->addSeparator();
+    edit_menu->addAction(m_rename_entity_action);
+    edit_menu->addAction(m_toggle_visibility_action);
+    edit_menu->addAction(m_delete_entity_action);
+    auto* create_menu = menuBar()->addMenu("Create");
+    create_menu->addAction(m_create_surface_action);
     auto* view_menu = menuBar()->addMenu("View");
     view_menu->addAction(m_outliner_dock->toggleViewAction());
     view_menu->addAction(m_inspector_dock->toggleViewAction());
@@ -94,8 +150,8 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toolbar->addAction(select_action);
-    toolbar->addAction(create_action);
-    toolbar->addAction(modify_action);
+    toolbar->addAction(m_create_surface_action);
+    toolbar->addAction(m_delete_entity_action);
     toolbar->addSeparator();
     toolbar->addAction(m_undo_action);
     toolbar->addAction(m_redo_action);
@@ -168,6 +224,61 @@ void MainWindow::redo() {
     (void)m_session.redo();
 }
 
+void MainWindow::create_surface() {
+    CreateSurfaceDialog dialog(suggested_surface_name(), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const SurfaceCreationParameters parameters = dialog.parameters();
+    auto surface = NurbsSurface::create(
+        parameters.u_count,
+        parameters.v_count,
+        parameters.u_degree,
+        parameters.v_degree,
+        make_flat_control_net(parameters.u_count, parameters.v_count)
+    );
+    if (!surface.has_value()) {
+        QMessageBox::warning(this, "Create Surface", "The requested surface is invalid.");
+        return;
+    }
+
+    auto entity = m_session.create_surface_entity(parameters.name, std::move(*surface));
+    if (!entity.has_value()) {
+        QMessageBox::warning(this, "Create Surface", "The surface could not be added.");
+        return;
+    }
+    (void)m_session.select_entity(EntitySelection{*entity});
+}
+
+void MainWindow::delete_selected_entity() {
+    const std::optional<EntityId> entity = selected_entity_id();
+    if (entity.has_value()) {
+        (void)m_session.delete_entity(*entity);
+    }
+}
+
+void MainWindow::rename_selected_entity() {
+    if (!selected_entity_id().has_value()) {
+        return;
+    }
+    m_outliner_dock->show();
+    m_outliner_dock->raise();
+    m_outliner->setFocus();
+    m_outliner->edit_selected_name();
+}
+
+void MainWindow::toggle_selected_entity_visibility() {
+    const std::optional<EntityId> entity = selected_entity_id();
+    if (!entity.has_value()) {
+        return;
+    }
+    const SceneNode* node = m_session.scene().find_entity(*entity);
+    if (node != nullptr) {
+        (void)m_session.set_entity_visibility(*entity, !node->visible);
+    }
+}
+
 void MainWindow::handle_editor_change(EditorChange change) {
     if (change.selection || change.entities) {
         m_outliner->refresh();
@@ -186,6 +297,18 @@ void MainWindow::handle_editor_change(EditorChange change) {
 void MainWindow::refresh_ui_state() {
     m_undo_action->setEnabled(m_session.can_undo());
     m_redo_action->setEnabled(m_session.can_redo());
+
+    const std::optional<EntityId> selected_entity = selected_entity_id();
+    const SceneNode* selected_node = selected_entity.has_value()
+        ? m_session.scene().find_entity(*selected_entity)
+        : nullptr;
+    const bool has_entity = selected_node != nullptr;
+    m_delete_entity_action->setEnabled(has_entity);
+    m_rename_entity_action->setEnabled(has_entity);
+    m_toggle_visibility_action->setEnabled(has_entity);
+    m_toggle_visibility_action->setText(
+        has_entity && !selected_node->visible ? "Show" : "Hide"
+    );
 
     const ControlPointSelection* selection = m_session.selection().control_point();
     if (selection != nullptr) {
@@ -210,4 +333,27 @@ void MainWindow::refresh_ui_state() {
     m_selection_status->setText(node == nullptr
         ? QString("Unknown entity")
         : QString::fromStdString(node->name));
+}
+
+std::optional<EntityId> MainWindow::selected_entity_id() const {
+    if (const EntitySelection* entity = m_session.selection().entity()) {
+        return entity->entity;
+    }
+    if (const ControlPointSelection* point = m_session.selection().control_point()) {
+        return point->entity;
+    }
+    return std::nullopt;
+}
+
+std::string MainWindow::suggested_surface_name() const {
+    for (std::size_t index = 1;; ++index) {
+        const std::string candidate = "Surface " + std::to_string(index);
+        const bool exists = std::ranges::any_of(
+            m_session.scene().nodes(),
+            [&candidate](const SceneNode& node) { return node.name == candidate; }
+        );
+        if (!exists) {
+            return candidate;
+        }
+    }
 }
