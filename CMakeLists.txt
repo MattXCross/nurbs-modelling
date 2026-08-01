@@ -65,13 +65,19 @@ enable_project_warnings(cad_document)
 enable_project_warnings(cad_editor)
 enable_project_warnings(cad_raylib)
 
+add_library(cad_qt_ui STATIC
+    src/main_window.cpp
+)
+target_include_directories(cad_qt_ui PUBLIC include)
+target_link_libraries(cad_qt_ui PUBLIC
+    cad_editor
+    Qt6::Widgets
+)
+enable_project_warnings(cad_qt_ui)
+
 add_executable(cad_app main.cpp)
 target_link_libraries(cad_app PRIVATE
-    cad_raylib
-    raylib
-    Qt6::OpenGL
-    Qt6::OpenGLWidgets
-    Qt6::Widgets
+    cad_qt_ui
 )
 
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT cad_app)
