@@ -1,6 +1,6 @@
 # Nurbsman
 
-<img width="1279" height="718" alt="Nurbsman editor" src="https://github.com/user-attachments/assets/5dd0dde1-fe66-407c-b666-1b45d04ab25c" />
+<img width="1654" height="962" alt="image" src="https://github.com/user-attachments/assets/ef280734-bce6-4fa7-9eaa-58908a2acdd1" />
 
 Nurbsman is an experimental C++23 NURBS modelling application.
 
