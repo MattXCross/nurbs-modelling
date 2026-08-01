@@ -32,25 +32,17 @@ target_include_directories(cad_document PUBLIC include)
 target_link_libraries(cad_document PUBLIC cad_geometry)
 
 add_library(cad_editor STATIC
-    src/editor_chrome.cpp
-    src/editor_layout.cpp
     src/editor_session.cpp
     src/input_tools.cpp
-    src/ui/ui_widgets.cpp
-    src/ui/ui_panel.cpp
-    src/ui/ui_layer.cpp
-    src/ui/control_point_inspector.cpp
 )
 target_include_directories(cad_editor PUBLIC include)
 target_link_libraries(cad_editor PUBLIC cad_document)
 
-add_library(cad_raylib STATIC
-    src/raylib_input.cpp
-    src/raylib_ui_renderer.cpp
+add_library(cad_raylib_renderer STATIC
     src/raylib_viewport_renderer.cpp
 )
-target_include_directories(cad_raylib PUBLIC include)
-target_link_libraries(cad_raylib PUBLIC cad_editor PRIVATE raylib)
+target_include_directories(cad_raylib_renderer PUBLIC include)
+target_link_libraries(cad_raylib_renderer PUBLIC cad_document PRIVATE raylib)
 
 function(enable_project_warnings target)
     if(MSVC)
@@ -63,7 +55,7 @@ endfunction()
 enable_project_warnings(cad_geometry)
 enable_project_warnings(cad_document)
 enable_project_warnings(cad_editor)
-enable_project_warnings(cad_raylib)
+enable_project_warnings(cad_raylib_renderer)
 
 add_library(cad_qt_ui STATIC
     src/main_window.cpp
@@ -76,7 +68,7 @@ target_link_libraries(cad_qt_ui PUBLIC
     Qt6::OpenGLWidgets
     Qt6::Widgets
     PRIVATE
-    cad_raylib
+    cad_raylib_renderer
     raylib
 )
 enable_project_warnings(cad_qt_ui)
@@ -87,3 +79,9 @@ target_link_libraries(cad_app PRIVATE
 )
 
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT cad_app)
+
+include(GNUInstallDirs)
+install(TARGETS cad_app
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Nurbsman
+)
