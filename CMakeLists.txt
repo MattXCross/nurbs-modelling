@@ -67,6 +67,7 @@ enable_project_warnings(cad_raylib)
 
 add_library(cad_qt_ui STATIC
     src/main_window.cpp
+    src/qt_control_point_inspector.cpp
     src/raylib_viewport_widget.cpp
 )
 target_include_directories(cad_qt_ui PUBLIC include)

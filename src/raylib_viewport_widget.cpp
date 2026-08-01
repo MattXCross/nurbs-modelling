@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 
@@ -72,6 +73,12 @@ RaylibViewportWidget::RaylibViewportWidget(EditorSession& session, QWidget* pare
 
 RaylibViewportWidget::~RaylibViewportWidget() {
     cleanup_gl();
+}
+
+void RaylibViewportWidget::set_selection_changed_handler(
+    SelectionChangedHandler handler
+) {
+    m_selection_changed_handler = std::move(handler);
 }
 
 void RaylibViewportWidget::initializeGL() {
@@ -224,7 +231,9 @@ void RaylibViewportWidget::wheelEvent(QWheelEvent* event) {
 }
 
 void RaylibViewportWidget::dispatch_input(InputFrameSnapshot input) {
-    (void)m_session.process_viewport_input(input);
+    if (m_session.process_viewport_input(input) && m_selection_changed_handler) {
+        m_selection_changed_handler();
+    }
     update();
 }
 
