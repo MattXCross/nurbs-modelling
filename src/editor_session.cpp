@@ -126,8 +126,8 @@ bool EditorSession::undo() {
 }
 
 bool EditorSession::redo() {
-    if (cancel_pending_edit()) {
-        return true;
+    if (m_pending_edit.has_value()) {
+        return false;
     }
     return m_history.redo();
 }
@@ -137,7 +137,7 @@ bool EditorSession::can_undo() const {
 }
 
 bool EditorSession::can_redo() const {
-    return pending_edit_has_preview() || m_history.can_redo();
+    return !m_pending_edit.has_value() && m_history.can_redo();
 }
 
 void EditorSession::begin_control_point_edit(ControlPointField field) {
