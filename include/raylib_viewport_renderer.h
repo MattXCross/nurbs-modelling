@@ -1,6 +1,5 @@
 #pragma once
 
-#include "math_types.h"
 #include "orbit_camera.h"
 
 #include <memory>
@@ -10,19 +9,19 @@ class Scene;
 
 class RaylibViewportRenderer {
 public:
-    RaylibViewportRenderer(int width, int height);
+    RaylibViewportRenderer();
     ~RaylibViewportRenderer();
 
     RaylibViewportRenderer(const RaylibViewportRenderer&) = delete;
     RaylibViewportRenderer& operator=(const RaylibViewportRenderer&) = delete;
 
-    void resize(int width, int height);
     void render(
         const Scene& scene,
         const CameraState& camera,
-        const ControlPoint* selected_point
+        const ControlPoint* selected_point,
+        int framebuffer_width,
+        int framebuffer_height
     );
-    void composite(Rect destination) const;
 
 private:
     class Impl;

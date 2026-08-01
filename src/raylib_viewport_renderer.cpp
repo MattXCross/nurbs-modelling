@@ -3,9 +3,11 @@
 #include "core.h"
 #include "nurbs_surface.h"
 #include "raylib.h"
+#include "rlgl.h"
 #include "scene.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
@@ -24,10 +26,6 @@ Vector3 to_raylib(const Point3D& point) {
 
 Vector3 to_raylib(Vec3 vector) {
     return {vector.x, vector.y, vector.z};
-}
-
-Rectangle to_raylib(Rect rectangle) {
-    return {rectangle.x, rectangle.y, rectangle.width, rectangle.height};
 }
 
 Camera3D to_raylib(const CameraState& camera) {
@@ -62,74 +60,56 @@ void draw_control_net(const NurbsSurface& surface, const ControlPoint* selected_
 
 class RaylibViewportRenderer::Impl {
 public:
-    Impl(int width, int height) {
-        resize(width, height);
-    }
-
-    ~Impl() {
-        if (m_target.id != 0) {
-            UnloadRenderTexture(m_target);
-        }
-    }
-
-    void resize(int width, int height) {
-        width = std::max(width, 1);
-        height = std::max(height, 1);
-        if (m_target.texture.width == width && m_target.texture.height == height) {
-            return;
-        }
-        if (m_target.id != 0) {
-            UnloadRenderTexture(m_target);
-        }
-        m_target = LoadRenderTexture(width, height);
-    }
-
     void render(
         const Scene& scene,
         const CameraState& camera,
-        const ControlPoint* selected_point
+        const ControlPoint* selected_point,
+        int framebuffer_width,
+        int framebuffer_height
     ) {
-        BeginTextureMode(m_target);
-            ClearBackground(Color{16, 20, 26, 255});
-            BeginMode3D(to_raylib(camera));
-                DrawGrid(20, 1.0f);
-                for (const auto& node : scene.nodes()) {
-                    if (!node.visible || node.surface == nullptr) {
-                        continue;
-                    }
+        framebuffer_width = std::max(framebuffer_width, 1);
+        framebuffer_height = std::max(framebuffer_height, 1);
+        const double aspect = static_cast<double>(framebuffer_width) /
+            static_cast<double>(framebuffer_height);
+        constexpr double degrees_to_radians = 3.14159265358979323846 / 180.0;
+        const double near_plane = rlGetCullDistanceNear();
+        const double far_plane = rlGetCullDistanceFar();
+        const double top = near_plane * std::tan(
+            static_cast<double>(camera.vertical_fov_degrees) * degrees_to_radians * 0.5
+        );
+        const double right = top * aspect;
 
-                    draw_control_net(*node.surface, selected_point);
-                    CachedSurface& cached = m_surface_cache[node.id.value];
-                    if (cached.revision != node.geometry_revision) {
-                        cached.line_vertices = tessellate_wireframe(*node.surface, 100, 100);
-                        cached.revision = node.geometry_revision;
-                    }
-                    for (std::size_t index = 0; index + 1 < cached.line_vertices.size(); index += 2) {
-                        DrawLine3D(cached.line_vertices[index], cached.line_vertices[index + 1], BLUE);
-                    }
-                }
-            EndMode3D();
-        EndTextureMode();
+        rlClearColor(16, 20, 26, 255);
+        rlClearScreenBuffers();
+        rlMatrixMode(RL_PROJECTION);
+        rlLoadIdentity();
+        rlFrustum(-right, right, -top, top, near_plane, far_plane);
+        rlMatrixMode(RL_MODELVIEW);
+        rlSetMatrixModelview(GetCameraMatrix(to_raylib(camera)));
+        rlEnableDepthTest();
+
+        DrawGrid(20, 1.0f);
+        for (const auto& node : scene.nodes()) {
+            if (!node.visible || node.surface == nullptr) {
+                continue;
+            }
+
+            draw_control_net(*node.surface, selected_point);
+            CachedSurface& cached = m_surface_cache[node.id.value];
+            if (cached.revision != node.geometry_revision) {
+                cached.line_vertices = tessellate_wireframe(*node.surface, 100, 100);
+                cached.revision = node.geometry_revision;
+            }
+            for (std::size_t index = 0; index + 1 < cached.line_vertices.size(); index += 2) {
+                DrawLine3D(cached.line_vertices[index], cached.line_vertices[index + 1], BLUE);
+            }
+        }
+        rlDrawRenderBatchActive();
+        rlDisableDepthTest();
 
         std::erase_if(m_surface_cache, [&scene](const auto& entry) {
             return scene.find_entity(EntityId{entry.first}) == nullptr;
         });
-    }
-
-    void composite(Rect destination) const {
-        DrawTexturePro(
-            m_target.texture,
-            Rectangle{
-                0.0f,
-                0.0f,
-                static_cast<float>(m_target.texture.width),
-                -static_cast<float>(m_target.texture.height)
-            },
-            to_raylib(destination),
-            Vector2{},
-            0.0f,
-            WHITE
-        );
     }
 
 private:
@@ -197,27 +177,26 @@ private:
         return lines;
     }
 
-    RenderTexture2D m_target{};
     std::unordered_map<std::uint64_t, CachedSurface> m_surface_cache;
 };
 
-RaylibViewportRenderer::RaylibViewportRenderer(int width, int height)
-    : m_impl(std::make_unique<Impl>(width, height)) {}
+RaylibViewportRenderer::RaylibViewportRenderer()
+    : m_impl(std::make_unique<Impl>()) {}
 
 RaylibViewportRenderer::~RaylibViewportRenderer() = default;
-
-void RaylibViewportRenderer::resize(int width, int height) {
-    m_impl->resize(width, height);
-}
 
 void RaylibViewportRenderer::render(
     const Scene& scene,
     const CameraState& camera,
-    const ControlPoint* selected_point
+    const ControlPoint* selected_point,
+    int framebuffer_width,
+    int framebuffer_height
 ) {
-    m_impl->render(scene, camera, selected_point);
-}
-
-void RaylibViewportRenderer::composite(Rect destination) const {
-    m_impl->composite(destination);
+    m_impl->render(
+        scene,
+        camera,
+        selected_point,
+        framebuffer_width,
+        framebuffer_height
+    );
 }
