@@ -1,8 +1,10 @@
 #include "qt_control_point_inspector.h"
 
+#include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -35,13 +37,37 @@ ControlPointInspectorWidget::ControlPointInspectorWidget(
     m_selection_label = new QLabel(this);
     m_selection_label->setWordWrap(true);
 
-    m_fields_widget = new QWidget(this);
-    auto* form = new QFormLayout(m_fields_widget);
+    m_entity_fields_widget = new QWidget(this);
+    auto* entity_form = new QFormLayout(m_entity_fields_widget);
+    entity_form->setContentsMargins(0, 0, 0, 0);
+    entity_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    m_entity_name = new QLineEdit(m_entity_fields_widget);
+    connect(m_entity_name, &QLineEdit::editingFinished, this,
+        [this] { entity_name_changed(); });
+    entity_form->addRow("Name", m_entity_name);
+
+    m_entity_visible = new QCheckBox(m_entity_fields_widget);
+    connect(m_entity_visible, &QCheckBox::toggled, this,
+        [this](bool visible) { entity_visibility_changed(visible); });
+    entity_form->addRow("Visible", m_entity_visible);
+
+    m_entity_id = new QLabel(m_entity_fields_widget);
+    m_entity_type = new QLabel(m_entity_fields_widget);
+    m_control_net_size = new QLabel(m_entity_fields_widget);
+    m_surface_degree = new QLabel(m_entity_fields_widget);
+    entity_form->addRow("Entity ID", m_entity_id);
+    entity_form->addRow("Type", m_entity_type);
+    entity_form->addRow("Control net", m_control_net_size);
+    entity_form->addRow("Degree", m_surface_degree);
+
+    m_control_point_fields_widget = new QWidget(this);
+    auto* form = new QFormLayout(m_control_point_fields_widget);
     form->setContentsMargins(0, 0, 0, 0);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     for (std::size_t index = 0; index < m_fields.size(); ++index) {
-        auto* field = new QDoubleSpinBox(m_fields_widget);
+        auto* field = new QDoubleSpinBox(m_control_point_fields_widget);
         field->setDecimals(6);
         field->setSingleStep(0.1);
         field->setAccelerated(true);
@@ -66,7 +92,8 @@ ControlPointInspectorWidget::ControlPointInspectorWidget(
     layout->setContentsMargins(12, 12, 12, 12);
     layout->addWidget(m_selection_label);
     layout->addSpacing(8);
-    layout->addWidget(m_fields_widget);
+    layout->addWidget(m_entity_fields_widget);
+    layout->addWidget(m_control_point_fields_widget);
     layout->addStretch();
 
     refresh();
@@ -74,19 +101,50 @@ ControlPointInspectorWidget::ControlPointInspectorWidget(
 
 void ControlPointInspectorWidget::refresh() {
     m_editing.fill(false);
-    const ControlPointSelection* selection = m_session.selection().control_point();
-    const ControlPoint* point = m_session.selected_control_point();
-    const bool has_selection = selection != nullptr && point != nullptr;
-    m_fields_widget->setEnabled(has_selection);
+    const EntitySelection* entity_selection = m_session.selection().entity();
+    const SceneNode* entity = entity_selection == nullptr
+        ? nullptr
+        : m_session.scene().find_entity(entity_selection->entity);
+    m_inspected_entity = entity == nullptr
+        ? std::nullopt
+        : std::optional{entity->id};
+    m_entity_fields_widget->setVisible(entity != nullptr);
 
-    if (!has_selection) {
-        m_selection_label->setText("Select a control point to inspect its properties.");
+    const ControlPointSelection* point_selection = m_session.selection().control_point();
+    const ControlPoint* point = m_session.selected_control_point();
+    const bool has_control_point = point_selection != nullptr && point != nullptr;
+    m_control_point_fields_widget->setVisible(has_control_point);
+
+    if (entity != nullptr) {
+        m_selection_label->setText("NURBS surface");
+        const QSignalBlocker name_blocker(m_entity_name);
+        const QSignalBlocker visibility_blocker(m_entity_visible);
+        m_entity_name->setText(QString::fromStdString(entity->name));
+        m_entity_visible->setChecked(entity->visible);
+        m_entity_id->setText(QString::number(static_cast<qulonglong>(entity->id.value)));
+        m_entity_type->setText("NURBS surface");
+        m_control_net_size->setText(QString("%1 x %2")
+            .arg(static_cast<qulonglong>(entity->surface->u_count()))
+            .arg(static_cast<qulonglong>(entity->surface->v_count())));
+        m_surface_degree->setText(QString("%1 x %2")
+            .arg(static_cast<qulonglong>(entity->surface->u_degree()))
+            .arg(static_cast<qulonglong>(entity->surface->v_degree())));
         return;
     }
 
-    m_selection_label->setText(QString("Control vertex U%1 : V%2")
-        .arg(static_cast<qulonglong>(selection->u))
-        .arg(static_cast<qulonglong>(selection->v)));
+    if (!has_control_point) {
+        m_selection_label->setText("Select an entity or control point to inspect its properties.");
+        return;
+    }
+
+    const SceneNode* owner = m_session.scene().find_entity(point_selection->entity);
+    const QString owner_name = owner == nullptr
+        ? QString("Unknown entity")
+        : QString::fromStdString(owner->name);
+    m_selection_label->setText(QString("%1 / Control vertex U%2 : V%3")
+        .arg(owner_name)
+        .arg(static_cast<qulonglong>(point_selection->u))
+        .arg(static_cast<qulonglong>(point_selection->v)));
 
     const std::array values = {
         point->position.x,
@@ -97,6 +155,27 @@ void ControlPointInspectorWidget::refresh() {
     for (std::size_t index = 0; index < m_fields.size(); ++index) {
         const QSignalBlocker blocker(m_fields[index]);
         m_fields[index]->setValue(values[index]);
+    }
+}
+
+void ControlPointInspectorWidget::entity_name_changed() {
+    if (!m_inspected_entity.has_value()) {
+        refresh();
+        return;
+    }
+    if (!m_session.rename_entity(*m_inspected_entity, m_entity_name->text().toStdString())
+             .has_value()) {
+        refresh();
+    }
+}
+
+void ControlPointInspectorWidget::entity_visibility_changed(bool visible) {
+    if (!m_inspected_entity.has_value()) {
+        refresh();
+        return;
+    }
+    if (!m_session.set_entity_visibility(*m_inspected_entity, visible).has_value()) {
+        refresh();
     }
 }
 

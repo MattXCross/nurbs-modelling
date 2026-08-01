@@ -283,7 +283,7 @@ void MainWindow::handle_editor_change(EditorChange change) {
     if (change.selection || change.entities) {
         m_outliner->refresh();
     }
-    if (change.selection || change.properties) {
+    if (change.selection || change.entities || change.properties) {
         m_inspector->refresh();
     }
     if (change.selection || change.entities || change.geometry) {
