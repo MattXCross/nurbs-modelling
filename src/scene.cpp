@@ -2,15 +2,65 @@
 #include "nurbs_surface.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <limits>
 #include <memory>
 #include <print>
 #include <ranges>
 #include <utility>
 
-EntityId Scene::add_entity(std::string name, std::unique_ptr<NurbsSurface> surface) {
-    const EntityId id{m_next_entity_id++};
+std::expected<EntityId, SceneMutationError> Scene::add_entity(
+    std::string name,
+    std::unique_ptr<NurbsSurface> surface
+) {
+    if (surface == nullptr) {
+        return std::unexpected(SceneMutationError::invalid_entity);
+    }
+    if (m_next_entity_id == 0) {
+        return std::unexpected(SceneMutationError::entity_id_exhausted);
+    }
+
+    const EntityId id{m_next_entity_id};
+    m_next_entity_id = m_next_entity_id == std::numeric_limits<std::uint64_t>::max()
+        ? 0
+        : m_next_entity_id + 1;
     m_nodes.push_back(SceneNode{id, std::move(name), true, 1, std::move(surface)});
     return id;
+}
+
+std::expected<RemovedSceneNode, SceneMutationError> Scene::remove_entity(EntityId id) {
+    const auto node = std::ranges::find(m_nodes, id, &SceneNode::id);
+    if (node == m_nodes.end()) {
+        return std::unexpected(SceneMutationError::entity_not_found);
+    }
+
+    const std::size_t index = static_cast<std::size_t>(std::distance(m_nodes.begin(), node));
+    RemovedSceneNode removed{*this, std::move(*node), index};
+    m_nodes.erase(node);
+    return removed;
+}
+
+std::expected<void, SceneMutationError> Scene::restore_entity(RemovedSceneNode& removed) {
+    if (removed.m_owner != this || !removed.m_node.id || removed.m_node.surface == nullptr ||
+        removed.m_index > m_nodes.size()) {
+        return std::unexpected(SceneMutationError::invalid_entity);
+    }
+    if (find_entity(removed.m_node.id) != nullptr) {
+        return std::unexpected(SceneMutationError::duplicate_entity);
+    }
+
+    m_nodes.insert(
+        m_nodes.begin() + static_cast<std::ptrdiff_t>(removed.m_index),
+        std::move(removed.m_node)
+    );
+    const std::uint64_t restored_id = m_nodes[removed.m_index].id.value;
+    if (m_next_entity_id != 0 && restored_id >= m_next_entity_id) {
+        m_next_entity_id = restored_id == std::numeric_limits<std::uint64_t>::max()
+            ? 0
+            : restored_id + 1;
+    }
+    removed.m_owner = nullptr;
+    return {};
 }
 
 SceneNode* Scene::find_entity_mutable(EntityId id) {
@@ -21,6 +71,38 @@ SceneNode* Scene::find_entity_mutable(EntityId id) {
 const SceneNode* Scene::find_entity(EntityId id) const {
     const auto node = std::ranges::find(m_nodes, id, &SceneNode::id);
     return node == m_nodes.end() ? nullptr : &*node;
+}
+
+std::expected<bool, SceneMutationError> Scene::rename_entity(
+    EntityId id,
+    std::string name
+) {
+    SceneNode* node = find_entity_mutable(id);
+    if (node == nullptr) {
+        return std::unexpected(SceneMutationError::entity_not_found);
+    }
+    if (node->name == name) {
+        return false;
+    }
+
+    node->name = std::move(name);
+    return true;
+}
+
+std::expected<bool, SceneMutationError> Scene::set_entity_visibility(
+    EntityId id,
+    bool visible
+) {
+    SceneNode* node = find_entity_mutable(id);
+    if (node == nullptr) {
+        return std::unexpected(SceneMutationError::entity_not_found);
+    }
+    if (node->visible == visible) {
+        return false;
+    }
+
+    node->visible = visible;
+    return true;
 }
 
 const ControlPoint* Scene::resolve(ControlPointSelection selection) const {

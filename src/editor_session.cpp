@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -40,7 +41,7 @@ void set_field_value(
 class AppliedValueCommand final : public ICommand {
 public:
     AppliedValueCommand(
-        std::move_only_function<void(double)> set_value,
+        std::move_only_function<bool(double)> set_value,
         double initial_value,
         double final_value
     )
@@ -48,14 +49,139 @@ public:
           m_initial_value(initial_value),
           m_final_value(final_value) {}
 
-    void undo() override { m_set_value(m_initial_value); }
-    void redo() override { m_set_value(m_final_value); }
+    bool undo() override { return m_set_value(m_initial_value); }
+    bool redo() override { return m_set_value(m_final_value); }
 
 private:
-    std::move_only_function<void(double)> m_set_value;
+    std::move_only_function<bool(double)> m_set_value;
     double m_initial_value{0.0};
     double m_final_value{0.0};
 };
+
+class CreatedEntityCommand final : public ICommand {
+public:
+    CreatedEntityCommand(
+        Scene& scene,
+        EntityId entity,
+        std::move_only_function<void(EntityId)> on_removed
+    )
+        : m_scene(scene),
+          m_entity(entity),
+          m_on_removed(std::move(on_removed)) {}
+
+    bool undo() override {
+        auto removed = m_scene.remove_entity(m_entity);
+        if (!removed.has_value()) {
+            return false;
+        }
+        m_removed = std::move(*removed);
+        m_on_removed(m_entity);
+        return true;
+    }
+
+    bool redo() override {
+        if (!m_removed.has_value() || !m_scene.restore_entity(*m_removed).has_value()) {
+            return false;
+        }
+        m_removed.reset();
+        return true;
+    }
+
+private:
+    Scene& m_scene;
+    EntityId m_entity;
+    std::move_only_function<void(EntityId)> m_on_removed;
+    std::optional<RemovedSceneNode> m_removed;
+};
+
+class DeletedEntityCommand final : public ICommand {
+public:
+    DeletedEntityCommand(
+        Scene& scene,
+        RemovedSceneNode removed,
+        std::move_only_function<void(EntityId)> on_removed
+    )
+        : m_scene(scene),
+          m_removed(std::move(removed)),
+          m_entity(m_removed->entity()),
+          m_on_removed(std::move(on_removed)) {}
+
+    bool undo() override {
+        if (!m_removed.has_value() || !m_scene.restore_entity(*m_removed).has_value()) {
+            return false;
+        }
+        m_removed.reset();
+        return true;
+    }
+
+    bool redo() override {
+        auto removed = m_scene.remove_entity(m_entity);
+        if (!removed.has_value()) {
+            return false;
+        }
+        m_removed = std::move(*removed);
+        m_on_removed(m_entity);
+        return true;
+    }
+
+private:
+    Scene& m_scene;
+    std::optional<RemovedSceneNode> m_removed;
+    EntityId m_entity;
+    std::move_only_function<void(EntityId)> m_on_removed;
+};
+
+class RenamedEntityCommand final : public ICommand {
+public:
+    RenamedEntityCommand(
+        Scene& scene,
+        EntityId entity,
+        std::string initial_name,
+        std::string final_name
+    )
+        : m_scene(scene),
+          m_entity(entity),
+          m_initial_name(std::move(initial_name)),
+          m_final_name(std::move(final_name)) {}
+
+    bool undo() override { return m_scene.rename_entity(m_entity, m_initial_name).has_value(); }
+    bool redo() override { return m_scene.rename_entity(m_entity, m_final_name).has_value(); }
+
+private:
+    Scene& m_scene;
+    EntityId m_entity;
+    std::string m_initial_name;
+    std::string m_final_name;
+};
+
+class VisibilityCommand final : public ICommand {
+public:
+    VisibilityCommand(Scene& scene, EntityId entity, bool initial, bool final)
+        : m_scene(scene), m_entity(entity), m_initial(initial), m_final(final) {}
+
+    bool undo() override {
+        return m_scene.set_entity_visibility(m_entity, m_initial).has_value();
+    }
+    bool redo() override {
+        return m_scene.set_entity_visibility(m_entity, m_final).has_value();
+    }
+
+private:
+    Scene& m_scene;
+    EntityId m_entity;
+    bool m_initial;
+    bool m_final;
+};
+
+bool selection_references_entity(const Selection& selection, EntityId entity) {
+    if (const auto* selected_entity = std::get_if<EntitySelection>(&selection)) {
+        return selected_entity->entity == entity;
+    }
+    if (const auto* selected_point = std::get_if<ControlPointSelection>(&selection)) {
+        return selected_point->entity == entity;
+    }
+    return false;
+}
 
 } // namespace
 
@@ -74,7 +200,9 @@ EditorSession::EditorSession()
     if (!surface.has_value()) {
         throw std::logic_error("Failed to construct the default NURBS surface");
     }
-    (void)m_scene.add_entity("WaveSurface", std::move(*surface));
+    if (!m_scene.add_entity("WaveSurface", std::move(*surface)).has_value()) {
+        throw std::logic_error("Failed to add the default NURBS surface");
+    }
 
     m_input_dispatcher.register_tools<CameraNavigationTool>();
     m_input_dispatcher.register_tools<ControlPointSelectionTool>(
@@ -143,6 +271,98 @@ bool EditorSession::can_redo() const {
     return !m_pending_edit.has_value() && m_history.can_redo();
 }
 
+std::expected<EntityId, SceneMutationError> EditorSession::create_surface_entity(
+    std::string name,
+    std::unique_ptr<NurbsSurface> surface
+) {
+    auto entity = m_scene.add_entity(std::move(name), std::move(surface));
+    if (!entity.has_value()) {
+        return std::unexpected(entity.error());
+    }
+
+    (void)cancel_pending_edit();
+    m_history.record_applied(std::make_unique<CreatedEntityCommand>(
+        m_scene,
+        *entity,
+        [this](EntityId removed) { clear_selection_for_entity(removed); }
+    ));
+    return *entity;
+}
+
+std::expected<bool, SceneMutationError> EditorSession::delete_entity(EntityId id) {
+    if (m_scene.find_entity(id) == nullptr) {
+        return std::unexpected(SceneMutationError::entity_not_found);
+    }
+
+    (void)cancel_pending_edit();
+    auto removed = m_scene.remove_entity(id);
+    if (!removed.has_value()) {
+        return std::unexpected(removed.error());
+    }
+
+    clear_selection_for_entity(id);
+    m_history.record_applied(std::make_unique<DeletedEntityCommand>(
+        m_scene,
+        std::move(*removed),
+        [this](EntityId removed_id) { clear_selection_for_entity(removed_id); }
+    ));
+    return true;
+}
+
+std::expected<bool, SceneMutationError> EditorSession::rename_entity(
+    EntityId id,
+    std::string name
+) {
+    const SceneNode* node = m_scene.find_entity(id);
+    if (node == nullptr) {
+        return std::unexpected(SceneMutationError::entity_not_found);
+    }
+    if (node->name == name) {
+        return false;
+    }
+
+    (void)cancel_pending_edit();
+    std::string initial_name = node->name;
+    auto renamed = m_scene.rename_entity(id, name);
+    if (!renamed.has_value()) {
+        return std::unexpected(renamed.error());
+    }
+    m_history.record_applied(std::make_unique<RenamedEntityCommand>(
+        m_scene,
+        id,
+        std::move(initial_name),
+        std::move(name)
+    ));
+    return *renamed;
+}
+
+std::expected<bool, SceneMutationError> EditorSession::set_entity_visibility(
+    EntityId id,
+    bool visible
+) {
+    const SceneNode* node = m_scene.find_entity(id);
+    if (node == nullptr) {
+        return std::unexpected(SceneMutationError::entity_not_found);
+    }
+    if (node->visible == visible) {
+        return false;
+    }
+
+    (void)cancel_pending_edit();
+    const bool initial_visibility = node->visible;
+    auto changed = m_scene.set_entity_visibility(id, visible);
+    if (!changed.has_value()) {
+        return std::unexpected(changed.error());
+    }
+    m_history.record_applied(std::make_unique<VisibilityCommand>(
+        m_scene,
+        id,
+        initial_visibility,
+        visible
+    ));
+    return *changed;
+}
+
 bool EditorSession::begin_control_point_edit(ControlPointField field) {
     (void)cancel_pending_edit();
     const ControlPointSelection* selection = m_selection.control_point();
@@ -201,8 +421,9 @@ void EditorSession::finish_control_point_edit(ControlPointField field) {
             if (const ControlPoint* selected = scene->resolve(selection)) {
                 ControlPoint updated = *selected;
                 set_field_value(updated, field, value);
-                (void)scene->set_control_point(selection, updated);
+                return scene->set_control_point(selection, updated).has_value();
             }
+            return false;
         },
         edit.initial_value,
         final_value
@@ -239,4 +460,11 @@ bool EditorSession::pending_edit_has_preview() const {
 const ControlPoint* EditorSession::selected_control_point() const {
     const ControlPointSelection* selection = m_selection.control_point();
     return selection == nullptr ? nullptr : m_scene.resolve(*selection);
+}
+
+void EditorSession::clear_selection_for_entity(EntityId id) {
+    if (selection_references_entity(m_selection.current(), id)) {
+        m_selection.clear();
+        m_selection_changed = true;
+    }
 }

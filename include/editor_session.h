@@ -8,6 +8,7 @@
 #include "selection.h"
 
 #include <optional>
+#include <string>
 
 class EditorSession {
 public:
@@ -30,6 +31,20 @@ public:
     [[nodiscard]] bool can_undo() const;
     [[nodiscard]] bool can_redo() const;
 
+    [[nodiscard]] std::expected<EntityId, SceneMutationError> create_surface_entity(
+        std::string name,
+        std::unique_ptr<NurbsSurface> surface
+    );
+    [[nodiscard]] std::expected<bool, SceneMutationError> delete_entity(EntityId id);
+    [[nodiscard]] std::expected<bool, SceneMutationError> rename_entity(
+        EntityId id,
+        std::string name
+    );
+    [[nodiscard]] std::expected<bool, SceneMutationError> set_entity_visibility(
+        EntityId id,
+        bool visible
+    );
+
     [[nodiscard]] bool begin_control_point_edit(ControlPointField field);
     [[nodiscard]] bool preview_control_point_edit(ControlPointField field, double value);
     void finish_control_point_edit(ControlPointField field);
@@ -48,6 +63,7 @@ private:
 
     [[nodiscard]] bool cancel_pending_edit();
     [[nodiscard]] bool pending_edit_has_preview() const;
+    void clear_selection_for_entity(EntityId id);
 
     Scene m_scene;
     SelectionModel m_selection;

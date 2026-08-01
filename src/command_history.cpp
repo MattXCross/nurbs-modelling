@@ -18,7 +18,10 @@ bool CommandHistory::undo() {
 
     auto command = std::move(m_undo_stack.back());
     m_undo_stack.pop_back();
-    command->undo();
+    if (!command->undo()) {
+        m_undo_stack.push_back(std::move(command));
+        return false;
+    }
     m_redo_stack.push_back(std::move(command));
     return true;
 }
@@ -30,7 +33,10 @@ bool CommandHistory::redo() {
 
     auto command = std::move(m_redo_stack.back());
     m_redo_stack.pop_back();
-    command->redo();
+    if (!command->redo()) {
+        m_redo_stack.push_back(std::move(command));
+        return false;
+    }
     m_undo_stack.push_back(std::move(command));
     return true;
 }

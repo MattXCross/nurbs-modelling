@@ -17,10 +17,35 @@ struct SceneNode {
     std::unique_ptr<NurbsSurface> surface;
 };
 
+class Scene;
+
+class RemovedSceneNode {
+public:
+    RemovedSceneNode(RemovedSceneNode&&) noexcept = default;
+    RemovedSceneNode& operator=(RemovedSceneNode&&) noexcept = default;
+    RemovedSceneNode(const RemovedSceneNode&) = delete;
+    RemovedSceneNode& operator=(const RemovedSceneNode&) = delete;
+
+    [[nodiscard]] EntityId entity() const { return m_node.id; }
+
+private:
+    friend class Scene;
+
+    RemovedSceneNode(Scene& owner, SceneNode node, std::size_t index)
+        : m_owner(&owner), m_node(std::move(node)), m_index(index) {}
+
+    Scene* m_owner;
+    SceneNode m_node;
+    std::size_t m_index{0};
+};
+
 enum class SceneMutationError {
     entity_not_found,
     geometry_not_found,
-    invalid_control_point
+    invalid_control_point,
+    invalid_entity,
+    duplicate_entity,
+    entity_id_exhausted
 };
 
 class Scene {
@@ -31,8 +56,23 @@ private:
     std::uint64_t m_next_entity_id{1};
 
 public:
-    [[nodiscard]] EntityId add_entity(std::string name, std::unique_ptr<NurbsSurface> surface);
+    [[nodiscard]] std::expected<EntityId, SceneMutationError> add_entity(
+        std::string name,
+        std::unique_ptr<NurbsSurface> surface
+    );
+    [[nodiscard]] std::expected<RemovedSceneNode, SceneMutationError> remove_entity(EntityId id);
+    [[nodiscard]] std::expected<void, SceneMutationError> restore_entity(
+        RemovedSceneNode& removed
+    );
     [[nodiscard]] const SceneNode* find_entity(EntityId id) const;
+    [[nodiscard]] std::expected<bool, SceneMutationError> rename_entity(
+        EntityId id,
+        std::string name
+    );
+    [[nodiscard]] std::expected<bool, SceneMutationError> set_entity_visibility(
+        EntityId id,
+        bool visible
+    );
     [[nodiscard]] const ControlPoint* resolve(ControlPointSelection selection) const;
     [[nodiscard]] std::expected<bool, SceneMutationError> set_control_point(
         ControlPointSelection selection,

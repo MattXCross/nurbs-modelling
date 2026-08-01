@@ -6,8 +6,8 @@
 class ICommand {
 public:
     virtual ~ICommand() = default;
-    virtual void undo() = 0;
-    virtual void redo() = 0;
+    [[nodiscard]] virtual bool undo() = 0;
+    [[nodiscard]] virtual bool redo() = 0;
 };
 
 class CommandHistory {
