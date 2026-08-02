@@ -33,6 +33,12 @@ cmake --build --preset debug
 
 The executable is written to `build/debug/cad_app`. Use the `release` preset for an optimized build.
 
+Run the test suite after building with:
+
+```bash
+ctest --preset debug
+```
+
 ## Install
 
 Install the release executable with:

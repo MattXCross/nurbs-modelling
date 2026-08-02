@@ -4,6 +4,8 @@ project(nurbmodelling)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+
 include(FetchContent)
 
 FetchContent_Declare(
@@ -74,6 +76,15 @@ target_link_libraries(cad_qt_ui PUBLIC
     raylib
 )
 enable_project_warnings(cad_qt_ui)
+
+if(BUILD_TESTING)
+    add_executable(nurbs_surface_test
+        tests/nurbs_surface_test.cpp
+    )
+    target_link_libraries(nurbs_surface_test PRIVATE cad_geometry)
+    enable_project_warnings(nurbs_surface_test)
+    add_test(NAME nurbs_surface_test COMMAND nurbs_surface_test)
+endif()
 
 add_executable(cad_app main.cpp)
 target_link_libraries(cad_app PRIVATE
