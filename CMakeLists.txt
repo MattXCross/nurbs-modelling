@@ -85,6 +85,13 @@ if(BUILD_TESTING)
     enable_project_warnings(kernel_math_test)
     add_test(NAME kernel_math_test COMMAND kernel_math_test)
 
+    add_executable(geometry_tolerance_test
+        tests/geometry_tolerance_test.cpp
+    )
+    target_link_libraries(geometry_tolerance_test PRIVATE cad_geometry)
+    enable_project_warnings(geometry_tolerance_test)
+    add_test(NAME geometry_tolerance_test COMMAND geometry_tolerance_test)
+
     add_executable(orbit_camera_test
         tests/orbit_camera_test.cpp
     )
