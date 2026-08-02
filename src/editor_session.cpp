@@ -197,8 +197,8 @@ EditorSession::NotificationBatch::~NotificationBatch() {
 
 EditorSession::EditorSession()
     : m_camera_controller(
-          Vec3{10.0f, 10.0f, 10.0f},
-          Vec3{0.0f, 0.0f, 0.0f}
+          cad::Point3{10.0, 10.0, 10.0},
+          cad::Point3{0.0, 0.0, 0.0}
       ) {
     std::vector<ControlPoint> points = {
         {{-3, 0, -4}, 1.0}, {{0, 3, -4}, 1.0}, {{3, -2, -4}, 1.0},

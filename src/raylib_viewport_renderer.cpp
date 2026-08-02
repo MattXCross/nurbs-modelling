@@ -24,8 +24,12 @@ Vector3 to_raylib(const Point3D& point) {
     };
 }
 
-Vector3 to_raylib(Vec3 vector) {
-    return {vector.x, vector.y, vector.z};
+Vector3 to_raylib(cad::Vector3 vector) {
+    return {
+        static_cast<float>(vector.x),
+        static_cast<float>(vector.y),
+        static_cast<float>(vector.z)
+    };
 }
 
 Camera3D to_raylib(const CameraState& camera) {

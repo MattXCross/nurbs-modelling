@@ -324,6 +324,42 @@ void test_high_dynamic_range_values() {
     }
 }
 
+void test_platform_dependent_range_guards() {
+    if constexpr (std::numeric_limits<long double>::max() ==
+                  std::numeric_limits<double>::max()) {
+        auto large_weight = make_grid(2, 2);
+        large_weight[0].weight = std::numeric_limits<double>::max();
+        expect_creation_error(
+            NurbsSurface::create(2, 2, std::move(large_weight)),
+            NurbsSurfaceErrorCode::numeric_range_not_supported,
+            std::nullopt,
+            0,
+            "reject weight outside accumulator range"
+        );
+
+        expect_creation_error(
+            NurbsSurface::create(
+                2,
+                2,
+                1,
+                1,
+                make_grid(2, 2),
+                {
+                    std::numeric_limits<double>::lowest(),
+                    std::numeric_limits<double>::lowest(),
+                    std::numeric_limits<double>::max(),
+                    std::numeric_limits<double>::max()
+                },
+                {0.0, 0.0, 1.0, 1.0}
+            ),
+            NurbsSurfaceErrorCode::knot_range_not_finite,
+            NurbsParameterDirection::u,
+            NurbsSurfaceError::no_index,
+            "reject knot range outside accumulator range"
+        );
+    }
+}
+
 } // namespace
 
 int main() {
@@ -337,6 +373,7 @@ int main() {
     test_control_net_validation_errors();
     test_knot_validation_errors();
     test_high_dynamic_range_values();
+    test_platform_dependent_range_guards();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

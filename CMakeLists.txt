@@ -78,6 +78,20 @@ target_link_libraries(cad_qt_ui PUBLIC
 enable_project_warnings(cad_qt_ui)
 
 if(BUILD_TESTING)
+    add_executable(kernel_math_test
+        tests/kernel_math_test.cpp
+    )
+    target_link_libraries(kernel_math_test PRIVATE cad_geometry)
+    enable_project_warnings(kernel_math_test)
+    add_test(NAME kernel_math_test COMMAND kernel_math_test)
+
+    add_executable(orbit_camera_test
+        tests/orbit_camera_test.cpp
+    )
+    target_link_libraries(orbit_camera_test PRIVATE cad_geometry)
+    enable_project_warnings(orbit_camera_test)
+    add_test(NAME orbit_camera_test COMMAND orbit_camera_test)
+
     add_executable(nurbs_surface_test
         tests/nurbs_surface_test.cpp
     )

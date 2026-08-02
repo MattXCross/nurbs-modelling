@@ -1,6 +1,6 @@
 #include "input_tools.h"
 
-#include "core.h"
+#include "kernel_math.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,62 +10,52 @@
 
 namespace {
 
-Vec3 to_vec3(const Point3D& point) {
+cad::Point3 at_render_precision(cad::Point3 point) {
     return {
-        static_cast<float>(point.x),
-        static_cast<float>(point.y),
-        static_cast<float>(point.z)
+        static_cast<double>(static_cast<float>(point.x)),
+        static_cast<double>(static_cast<float>(point.y)),
+        static_cast<double>(static_cast<float>(point.z))
     };
 }
 
-Vec3 normalized(Vec3 vector) {
-    const float length = std::sqrt(
-        vector.x * vector.x + vector.y * vector.y + vector.z * vector.z
-    );
-    if (length == 0.0f) {
-        return {};
-    }
-    return {vector.x / length, vector.y / length, vector.z / length};
-}
-
-Vec3 cross(Vec3 left, Vec3 right) {
+cad::Vector3 at_render_precision(cad::Vector3 vector) {
     return {
-        left.y * right.z - left.z * right.y,
-        left.z * right.x - left.x * right.z,
-        left.x * right.y - left.y * right.x
+        static_cast<double>(static_cast<float>(vector.x)),
+        static_cast<double>(static_cast<float>(vector.y)),
+        static_cast<double>(static_cast<float>(vector.z))
     };
-}
-
-float dot(Vec3 left, Vec3 right) {
-    return left.x * right.x + left.y * right.y + left.z * right.z;
-}
-
-Vec3 subtract(Vec3 left, Vec3 right) {
-    return {left.x - right.x, left.y - right.y, left.z - right.z};
 }
 
 Vec2 project_to_viewport(
-    Vec3 world_position,
+    cad::Point3 world_position,
     const CameraState& camera,
     int viewport_width,
     int viewport_height
 ) {
-    constexpr float degrees_to_radians = 3.14159265358979323846f / 180.0f;
-    const Vec3 forward = normalized(subtract(camera.target, camera.position));
-    const Vec3 right = normalized(cross(forward, camera.up));
-    const Vec3 screen_up = normalized(cross(right, forward));
-    const Vec3 offset = subtract(world_position, camera.position);
-    const float depth = dot(offset, forward);
-    const float half_height = depth *
-        std::tan(camera.vertical_fov_degrees * degrees_to_radians * 0.5f);
-    const float aspect = static_cast<float>(viewport_width) /
-        static_cast<float>(viewport_height);
-    const float normalized_x = dot(offset, right) / (half_height * aspect);
-    const float normalized_y = dot(offset, screen_up) / half_height;
+    constexpr double degrees_to_radians = 3.14159265358979323846 / 180.0;
+    const cad::Point3 camera_position = at_render_precision(camera.position);
+    const cad::Point3 camera_target = at_render_precision(camera.target);
+    const cad::Vector3 camera_up = at_render_precision(camera.up);
+    world_position = at_render_precision(world_position);
+    const cad::Vector3 forward =
+        cad::normalized(camera_target - camera_position).value_or(cad::Vector3{});
+    const cad::Vector3 right =
+        cad::normalized(cad::cross(forward, camera_up)).value_or(cad::Vector3{});
+    const cad::Vector3 screen_up =
+        cad::normalized(cad::cross(right, forward)).value_or(cad::Vector3{});
+    const cad::Vector3 offset = world_position - camera_position;
+    const double depth = cad::dot(offset, forward);
+    const double half_height = depth *
+        std::tan(static_cast<double>(camera.vertical_fov_degrees) *
+                 degrees_to_radians * 0.5);
+    const double aspect = static_cast<double>(viewport_width) /
+        static_cast<double>(viewport_height);
+    const double normalized_x = cad::dot(offset, right) / (half_height * aspect);
+    const double normalized_y = cad::dot(offset, screen_up) / half_height;
 
     return {
-        (normalized_x + 1.0f) * 0.5f * static_cast<float>(viewport_width),
-        (1.0f - normalized_y) * 0.5f * static_cast<float>(viewport_height)
+        static_cast<float>((normalized_x + 1.0) * 0.5 * static_cast<double>(viewport_width)),
+        static_cast<float>((1.0 - normalized_y) * 0.5 * static_cast<double>(viewport_height))
     };
 }
 
@@ -96,14 +86,13 @@ void ControlPointSelectionTool::process_input(
     std::optional<ControlPointSelection> selected_point;
     const float hit_radius_squared = m_hit_radius * m_hit_radius;
     float closest_screen_distance_squared = std::numeric_limits<float>::max();
-    float closest_depth = std::numeric_limits<float>::max();
+    double closest_depth = std::numeric_limits<double>::max();
 
     const CameraState& camera = camera_controller.camera();
-    const Vec3 camera_forward = normalized(Vec3{
-        camera.target.x - camera.position.x,
-        camera.target.y - camera.position.y,
-        camera.target.z - camera.position.z
-    });
+    const cad::Point3 camera_position = at_render_precision(camera.position);
+    const cad::Point3 camera_target = at_render_precision(camera.target);
+    const cad::Vector3 camera_forward =
+        cad::normalized(camera_target - camera_position).value_or(cad::Vector3{});
 
     for (const auto& node : scene.nodes()) {
         if (!node.visible || !node.surface) {
@@ -114,12 +103,9 @@ void ControlPointSelectionTool::process_input(
         for (size_t u = 0; u < control_net.extent(0); ++u) {
             for (size_t v = 0; v < control_net.extent(1); ++v) {
                 const ControlPoint& point = control_net[u, v];
-                const Vec3 world_position = to_vec3(point.position);
-                const float depth =
-                    (world_position.x - camera.position.x) * camera_forward.x +
-                    (world_position.y - camera.position.y) * camera_forward.y +
-                    (world_position.z - camera.position.z) * camera_forward.z;
-                if (depth <= 0.0f) {
+                const cad::Point3 world_position = at_render_precision(point.position);
+                const double depth = cad::dot(world_position - camera_position, camera_forward);
+                if (depth <= 0.0) {
                     continue;
                 }
 
@@ -137,7 +123,7 @@ void ControlPointSelectionTool::process_input(
                 }
 
                 const bool closer_in_depth = depth < closest_depth;
-                const bool same_depth = std::abs(depth - closest_depth) <= 0.001f;
+                const bool same_depth = std::abs(depth - closest_depth) <= 0.001;
 
                 if (!closer_in_depth &&
                     !(same_depth && screen_distance_squared < closest_screen_distance_squared)) {
