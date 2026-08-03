@@ -1,14 +1,13 @@
 #include "nurbs_surface.h"
+#include "bspline_basis.h"
 #include "core.h"
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <expected>
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <utility>
 #include <vector>
 
@@ -171,88 +170,6 @@ std::optional<NurbsSurfaceError> validate_knots(
     return std::nullopt;
 }
 
-size_t find_span(
-    double parameter,
-    size_t control_count,
-    size_t degree,
-    const std::vector<double>& knots
-) {
-    if (parameter == knots[control_count]) {
-        return control_count - 1;
-    }
-
-    const auto first_larger = std::upper_bound(
-        knots.begin() + static_cast<std::ptrdiff_t>(degree),
-        knots.begin() + static_cast<std::ptrdiff_t>(control_count + 1),
-        parameter
-    );
-    return static_cast<size_t>(std::distance(knots.begin(), first_larger) - 1);
-}
-
-struct BasisWorkspace {
-    explicit BasisWorkspace(size_t degree)
-        : dynamic(degree > 3 ? 3 * (degree + 1) : 0), value_count(degree + 1) {}
-
-    [[nodiscard]] std::span<long double> values() {
-        auto storage = dynamic.empty()
-            ? std::span<long double>(fixed)
-            : std::span<long double>(dynamic);
-        return storage.first(value_count);
-    }
-
-    [[nodiscard]] std::span<long double> left() {
-        auto storage = dynamic.empty()
-            ? std::span<long double>(fixed)
-            : std::span<long double>(dynamic);
-        return storage.subspan(value_count, value_count);
-    }
-
-    [[nodiscard]] std::span<long double> right() {
-        auto storage = dynamic.empty()
-            ? std::span<long double>(fixed)
-            : std::span<long double>(dynamic);
-        return storage.subspan(2 * value_count, value_count);
-    }
-
-    std::array<long double, 12> fixed{};
-    std::vector<long double> dynamic;
-    size_t value_count;
-};
-
-std::span<long double> basis_functions(
-    size_t span,
-    double parameter,
-    size_t degree,
-    const std::vector<double>& knots,
-    BasisWorkspace& workspace
-) {
-    auto basis = workspace.values();
-    auto left = workspace.left();
-    auto right = workspace.right();
-    basis[0] = 1.0L;
-
-    for (size_t j = 1; j <= degree; ++j) {
-        left[j] = static_cast<long double>(parameter) -
-            static_cast<long double>(knots[span + 1 - j]);
-        right[j] = static_cast<long double>(knots[span + j]) -
-            static_cast<long double>(parameter);
-        long double saved = 0.0L;
-
-        for (size_t r = 0; r < j; ++r) {
-            const long double denominator = right[r + 1] + left[j - r];
-            const long double term = denominator == 0.0L
-                ? 0.0L
-                : basis[r] / denominator;
-            basis[r] = saved + right[r + 1] * term;
-            saved = left[j - r] * term;
-        }
-
-        basis[j] = saved;
-    }
-
-    return basis;
-}
-
 } // namespace
 
 std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> NurbsSurface::create(
@@ -402,18 +319,7 @@ std::vector<double> NurbsSurface::make_open_uniform_knots(size_t control_count, 
 }
 
 std::expected<Point3D, CadError> NurbsSurface::evaluate(double u, double v) const {
-    if (validate_knots(
-            m_u_knots,
-            m_u_count,
-            m_u_degree,
-            NurbsParameterDirection::u
-        ).has_value() ||
-        validate_knots(
-            m_v_knots,
-            m_v_count,
-            m_v_degree,
-            NurbsParameterDirection::v
-        ).has_value() ||
+    if (m_u_count == 0 || m_v_count == 0 ||
         m_u_count > std::numeric_limits<size_t>::max() / m_v_count ||
         m_control_points.size() != m_u_count * m_v_count ||
         !std::ranges::all_of(m_control_points, [](const ControlPoint& point) {
@@ -424,23 +330,36 @@ std::expected<Point3D, CadError> NurbsSurface::evaluate(double u, double v) cons
         return std::unexpected(CadError::DegenerateSurface);
     }
 
-    const double u_start = m_u_knots[m_u_degree];
-    const double u_end = m_u_knots[m_u_count];
-    const double v_start = m_v_knots[m_v_degree];
-    const double v_end = m_v_knots[m_v_count];
-    if (!std::isfinite(u) || !std::isfinite(v) ||
-        u < u_start || u > u_end || v < v_start || v > v_end) {
-        return std::unexpected(CadError::OutOfBounds);
+    const auto u_evaluation = cad::evaluate_bspline_basis(
+        m_u_count,
+        m_u_degree,
+        m_u_knots,
+        u
+    );
+    if (!u_evaluation) {
+        return std::unexpected(
+            u_evaluation.error() == cad::BSplineBasisError::parameter_out_of_domain
+                ? CadError::OutOfBounds
+                : CadError::DegenerateSurface
+        );
     }
-
-    const size_t u_span = find_span(u, m_u_count, m_u_degree, m_u_knots);
-    const size_t v_span = find_span(v, m_v_count, m_v_degree, m_v_knots);
-    BasisWorkspace u_workspace(m_u_degree);
-    BasisWorkspace v_workspace(m_v_degree);
-    const auto u_basis = basis_functions(u_span, u, m_u_degree, m_u_knots, u_workspace);
-    const auto v_basis = basis_functions(v_span, v, m_v_degree, m_v_knots, v_workspace);
-    const size_t first_u = u_span - m_u_degree;
-    const size_t first_v = v_span - m_v_degree;
+    const auto v_evaluation = cad::evaluate_bspline_basis(
+        m_v_count,
+        m_v_degree,
+        m_v_knots,
+        v
+    );
+    if (!v_evaluation) {
+        return std::unexpected(
+            v_evaluation.error() == cad::BSplineBasisError::parameter_out_of_domain
+                ? CadError::OutOfBounds
+                : CadError::DegenerateSurface
+        );
+    }
+    const auto u_basis = u_evaluation->derivative(0);
+    const auto v_basis = v_evaluation->derivative(0);
+    const size_t first_u = u_evaluation->first_control_point();
+    const size_t first_v = v_evaluation->first_control_point();
     const auto net = control_net_2d();
 
     long double numerator_x = 0.0L;
