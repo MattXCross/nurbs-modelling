@@ -23,7 +23,9 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
 
 add_library(cad_geometry STATIC
     src/bspline_basis.cpp
+    src/geometry_queries.cpp
     src/nurbs_surface.cpp
+    src/surface_sampling.cpp
 )
 target_include_directories(cad_geometry PUBLIC include)
 
@@ -99,6 +101,13 @@ if(BUILD_TESTING)
     target_link_libraries(bspline_basis_test PRIVATE cad_geometry)
     enable_project_warnings(bspline_basis_test)
     add_test(NAME bspline_basis_test COMMAND bspline_basis_test)
+
+    add_executable(geometry_queries_test
+        tests/geometry_queries_test.cpp
+    )
+    target_link_libraries(geometry_queries_test PRIVATE cad_geometry)
+    enable_project_warnings(geometry_queries_test)
+    add_test(NAME geometry_queries_test COMMAND geometry_queries_test)
 
     add_executable(orbit_camera_test
         tests/orbit_camera_test.cpp

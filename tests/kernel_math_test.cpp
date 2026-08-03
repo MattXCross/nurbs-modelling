@@ -139,17 +139,21 @@ void test_plane() {
         !cad::Plane::from_points({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}),
         "reject collinear plane points"
     );
-    expect(
-        !cad::Plane::from_point_normal(
-            {
-                std::numeric_limits<double>::max(),
-                std::numeric_limits<double>::max(),
-                0.0
-            },
-            {1.0, 1.0, 0.0}
-        ),
-        "reject unrepresentable plane offset"
+    const auto large_plane = cad::Plane::from_point_normal(
+        {1e18, 1e18, 0.0},
+        {1.0, 1.0, 0.0}
     );
+    expect(large_plane.has_value(), "represent large plane with origin and normal");
+    if (large_plane) {
+        expect(large_plane->signed_distance(large_plane->origin()) == 0.0,
+               "large plane origin has zero signed distance");
+        const auto reflection = cad::AffineTransform3::reflection(*large_plane);
+        expect(reflection.has_value(), "create reproducible large reflection");
+        if (reflection) {
+            expect(reflection->transform_point(large_plane->origin()) == large_plane->origin(),
+                   "large reflection keeps plane origin fixed");
+        }
+    }
 }
 
 void test_bounds() {
@@ -216,8 +220,12 @@ void test_transforms() {
     const auto mirror_plane = cad::Plane::from_point_normal({2.0, 0.0, 0.0}, {1.0, 0.0, 0.0});
     expect(mirror_plane.has_value(), "create reflection plane");
     if (mirror_plane) {
-        expect_point(cad::AffineTransform3::reflection(*mirror_plane).transform_point({5.0, 1.0, 0.0}),
-                     {-1.0, 1.0, 0.0}, "reflect point across offset plane");
+        const auto reflection = cad::AffineTransform3::reflection(*mirror_plane);
+        expect(reflection.has_value(), "create reflection transform");
+        if (reflection) {
+            expect_point(reflection->transform_point({5.0, 1.0, 0.0}),
+                         {-1.0, 1.0, 0.0}, "reflect point across offset plane");
+        }
     }
 
     expect(!cad::AffineTransform3::rotation({}, 1.0), "reject zero rotation axis");

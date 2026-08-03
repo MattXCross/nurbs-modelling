@@ -133,6 +133,7 @@ public:
         double v,
         const cad::GeometryTolerance& tolerance
     ) const;
+    [[nodiscard]] std::optional<cad::Aabb3> control_bounds() const noexcept;
 
     [[nodiscard]] static std::vector<double> make_open_uniform_knots(
         size_t control_count,

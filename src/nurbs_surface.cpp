@@ -1,6 +1,7 @@
 #include "nurbs_surface.h"
 #include "bspline_basis.h"
 #include "core.h"
+#include "geometry_queries.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -613,4 +614,8 @@ std::expected<cad::Vector3, CadError> NurbsSurface::normal(
         return std::unexpected(CadError::DegenerateSurface);
     }
     return *result;
+}
+
+std::optional<cad::Aabb3> NurbsSurface::control_bounds() const noexcept {
+    return cad::control_hull_bounds(m_control_points);
 }

@@ -242,17 +242,7 @@ public:
         if (!is_finite(point) || !unit_normal) {
             return std::nullopt;
         }
-        const long double offset = -(
-            static_cast<long double>(unit_normal->x) * static_cast<long double>(point.x) +
-            static_cast<long double>(unit_normal->y) * static_cast<long double>(point.y) +
-            static_cast<long double>(unit_normal->z) * static_cast<long double>(point.z)
-        );
-        if (!std::isfinite(offset) ||
-            offset < std::numeric_limits<double>::lowest() ||
-            offset > std::numeric_limits<double>::max()) {
-            return std::nullopt;
-        }
-        return Plane(*unit_normal, static_cast<double>(offset));
+        return Plane(point, *unit_normal);
     }
 
     [[nodiscard]] static std::optional<Plane> from_points(
@@ -264,20 +254,27 @@ public:
     }
 
     [[nodiscard]] Vector3 normal() const noexcept { return m_normal; }
-    [[nodiscard]] double offset() const noexcept { return m_offset; }
+    [[nodiscard]] Point3 origin() const noexcept { return m_origin; }
     [[nodiscard]] double signed_distance(Point3 point) const noexcept {
-        return dot(m_normal, point - Point3{}) + m_offset;
+        const long double distance =
+            static_cast<long double>(m_normal.x) *
+                (static_cast<long double>(point.x) - m_origin.x) +
+            static_cast<long double>(m_normal.y) *
+                (static_cast<long double>(point.y) - m_origin.y) +
+            static_cast<long double>(m_normal.z) *
+                (static_cast<long double>(point.z) - m_origin.z);
+        return static_cast<double>(distance);
     }
     [[nodiscard]] Point3 project(Point3 point) const noexcept {
         return point - m_normal * signed_distance(point);
     }
 
 private:
-    constexpr Plane(Vector3 normal, double offset) noexcept
-        : m_normal(normal), m_offset(offset) {}
+    constexpr Plane(Point3 origin, Vector3 normal) noexcept
+        : m_origin(origin), m_normal(normal) {}
 
+    Point3 m_origin;
     Vector3 m_normal;
-    double m_offset;
 };
 
 class Aabb3 {
@@ -409,17 +406,51 @@ public:
         });
     }
 
-    [[nodiscard]] static AffineTransform3 reflection(const Plane& plane) noexcept {
+    [[nodiscard]] static std::optional<AffineTransform3> reflection(const Plane& plane) noexcept {
         const Vector3 normal = plane.normal();
+        const Point3 origin = plane.origin();
         const double x = normal.x;
         const double y = normal.y;
         const double z = normal.z;
-        const double translation_scale = -2.0 * plane.offset();
-        return AffineTransform3({
-            1.0 - 2.0 * x * x, -2.0 * x * y, -2.0 * x * z, translation_scale * x,
-            -2.0 * y * x, 1.0 - 2.0 * y * y, -2.0 * y * z, translation_scale * y,
-            -2.0 * z * x, -2.0 * z * y, 1.0 - 2.0 * z * z, translation_scale * z
+        const long double projection =
+            static_cast<long double>(x) * origin.x +
+            static_cast<long double>(y) * origin.y +
+            static_cast<long double>(z) * origin.z;
+        const std::array<long double, 3> translation{
+            2.0L * projection * x,
+            2.0L * projection * y,
+            2.0L * projection * z
+        };
+        for (const long double component : translation) {
+            if (!std::isfinite(component) ||
+                component < std::numeric_limits<double>::lowest() ||
+                component > std::numeric_limits<double>::max()) {
+                return std::nullopt;
+            }
+        }
+        AffineTransform3 transform({
+            1.0 - 2.0 * x * x, -2.0 * x * y, -2.0 * x * z,
+            static_cast<double>(translation[0]),
+            -2.0 * y * x, 1.0 - 2.0 * y * y, -2.0 * y * z,
+            static_cast<double>(translation[1]),
+            -2.0 * z * x, -2.0 * z * y, 1.0 - 2.0 * z * z,
+            static_cast<double>(translation[2])
         });
+        // Anchor the matrix to the represented plane using the same arithmetic
+        // transform_point() will use, avoiding cancellation drift at large coordinates.
+        for (int iteration = 0; iteration < 2; ++iteration) {
+            const Point3 mapped_origin = transform.transform_point(origin);
+            if (!is_finite(mapped_origin)) {
+                return std::nullopt;
+            }
+            transform.m_values[3] += origin.x - mapped_origin.x;
+            transform.m_values[7] += origin.y - mapped_origin.y;
+            transform.m_values[11] += origin.z - mapped_origin.z;
+        }
+        if (transform.transform_point(origin) != origin) {
+            return std::nullopt;
+        }
+        return transform;
     }
 
     [[nodiscard]] Point3 transform_point(Point3 point) const noexcept {
