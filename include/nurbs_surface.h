@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "core.h"
+#include "geometry_tolerance.h"
 
 class Scene;
 
@@ -40,6 +41,15 @@ struct NurbsSurfaceError {
     size_t index{no_index};
 };
 
+struct NurbsSurfaceDerivatives {
+    Point3D position;
+    cad::Vector3 u;
+    cad::Vector3 v;
+    cad::Vector3 uu;
+    cad::Vector3 uv;
+    cad::Vector3 vv;
+};
+
 class NurbsSurface {
 private:
     friend class Scene;
@@ -62,6 +72,11 @@ private:
         size_t v,
         ControlPoint point
     );
+    [[nodiscard]] std::expected<NurbsSurfaceDerivatives, CadError> evaluate_derivatives_impl(
+        double u,
+        double v,
+        size_t derivative_order
+    ) const;
 
     size_t m_u_count{0};
     size_t m_v_count{0};
@@ -108,6 +123,16 @@ public:
     }
 
     [[nodiscard]] std::expected<Point3D, CadError> evaluate(double u, double v) const;
+    // At internal knots derivatives are right-sided; at the domain end they are left-sided.
+    [[nodiscard]] std::expected<NurbsSurfaceDerivatives, CadError> evaluate_derivatives(
+        double u,
+        double v
+    ) const;
+    [[nodiscard]] std::expected<cad::Vector3, CadError> normal(
+        double u,
+        double v,
+        const cad::GeometryTolerance& tolerance
+    ) const;
 
     [[nodiscard]] static std::vector<double> make_open_uniform_knots(
         size_t control_count,

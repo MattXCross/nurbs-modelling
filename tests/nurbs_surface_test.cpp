@@ -54,6 +54,17 @@ void expect_point(
     expect(nearly_equal(result->z, expected.z, tolerance), message);
 }
 
+void expect_vector(
+    cad::Vector3 actual,
+    cad::Vector3 expected,
+    std::string_view message,
+    double tolerance = 1e-12
+) {
+    expect(nearly_equal(actual.x, expected.x, tolerance), message);
+    expect(nearly_equal(actual.y, expected.y, tolerance), message);
+    expect(nearly_equal(actual.z, expected.z, tolerance), message);
+}
+
 void expect_creation_error(
     std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> result,
     NurbsSurfaceErrorCode code,
@@ -360,6 +371,236 @@ void test_platform_dependent_range_guards() {
     }
 }
 
+void test_planar_surface_derivatives_and_normals() {
+    std::vector<ControlPoint> points{
+        {{0.0, 0.0, 0.0}, 1.0},
+        {{0.0, 2.0, 0.0}, 1.0},
+        {{2.0, 0.0, 2.0}, 1.0},
+        {{2.0, 2.0, 2.0}, 1.0},
+    };
+    auto result = NurbsSurface::create(2, 2, std::move(points));
+    expect(result.has_value(), "create planar derivative surface");
+    if (!result) {
+        return;
+    }
+
+    const auto derivatives = (*result)->evaluate_derivatives(0.35, 0.65);
+    expect(derivatives.has_value(), "evaluate planar surface derivatives");
+    if (derivatives) {
+        expect_vector(derivatives->u, {2.0, 0.0, 2.0}, "planar U derivative");
+        expect_vector(derivatives->v, {0.0, 2.0, 0.0}, "planar V derivative");
+        expect_vector(derivatives->uu, {}, "planar UU derivative");
+        expect_vector(derivatives->uv, {}, "planar UV derivative");
+        expect_vector(derivatives->vv, {}, "planar VV derivative");
+        expect_point(
+            (*result)->evaluate(0.35, 0.65),
+            derivatives->position,
+            "differential position matches point evaluation"
+        );
+    }
+
+    const cad::GeometryTolerance tolerance = cad::GeometryTolerance::defaults();
+    const cad::Vector3 expected_normal{-std::sqrt(0.5), 0.0, std::sqrt(0.5)};
+    for (const auto [u, v] : std::vector<std::pair<double, double>>{
+             {0.0, 0.0}, {0.2, 0.7}, {0.5, 0.5}, {1.0, 1.0}
+         }) {
+        const auto normal = (*result)->normal(u, v, tolerance);
+        expect(normal.has_value(), "evaluate stable planar normal");
+        if (normal) {
+            expect_vector(*normal, expected_normal, "planar normal orientation");
+            expect(nearly_equal(cad::length(*normal), 1.0), "planar normal has unit length");
+        }
+    }
+}
+
+void test_rational_derivatives_against_finite_differences() {
+    std::vector<ControlPoint> points{
+        {{0.0, 0.0, 0.0}, 1.0}, {{0.0, 1.0, 1.0}, 0.8}, {{0.0, 2.0, 0.0}, 1.0},
+        {{1.0, 0.0, 1.0}, 1.2}, {{1.0, 1.0, 2.0}, 2.0}, {{1.0, 2.0, 1.0}, 1.1},
+        {{2.0, 0.0, 0.0}, 1.0}, {{2.0, 1.0, 1.0}, 0.9}, {{2.0, 2.0, 0.0}, 1.0},
+    };
+    auto result = NurbsSurface::create(3, 3, 2, 2, std::move(points));
+    expect(result.has_value(), "create rational derivative surface");
+    if (!result) {
+        return;
+    }
+
+    constexpr double u = 0.43;
+    constexpr double v = 0.57;
+    constexpr double step = 1e-4;
+    const auto derivatives = (*result)->evaluate_derivatives(u, v);
+    expect(derivatives.has_value(), "evaluate rational surface derivatives");
+    if (!derivatives) {
+        return;
+    }
+
+    const auto point = [&](double sample_u, double sample_v) {
+        return (*result)->evaluate(sample_u, sample_v).value();
+    };
+    const Point3D center = point(u, v);
+    const Point3D u_plus = point(u + step, v);
+    const Point3D u_minus = point(u - step, v);
+    const Point3D v_plus = point(u, v + step);
+    const Point3D v_minus = point(u, v - step);
+    const cad::Vector3 finite_u = (u_plus - u_minus) / (2.0 * step);
+    const cad::Vector3 finite_v = (v_plus - v_minus) / (2.0 * step);
+    const cad::Vector3 finite_uu =
+        ((u_plus - center) + (u_minus - center)) / (step * step);
+    const cad::Vector3 finite_vv =
+        ((v_plus - center) + (v_minus - center)) / (step * step);
+    const Point3D plus_plus = point(u + step, v + step);
+    const Point3D plus_minus = point(u + step, v - step);
+    const Point3D minus_plus = point(u - step, v + step);
+    const Point3D minus_minus = point(u - step, v - step);
+    const cad::Vector3 finite_uv =
+        ((plus_plus - plus_minus) - (minus_plus - minus_minus)) / (4.0 * step * step);
+
+    expect_vector(derivatives->u, finite_u, "rational U finite difference", 1e-6);
+    expect_vector(derivatives->v, finite_v, "rational V finite difference", 1e-6);
+    expect_vector(derivatives->uu, finite_uu, "rational UU finite difference", 1e-5);
+    expect_vector(derivatives->uv, finite_uv, "rational UV finite difference", 1e-5);
+    expect_vector(derivatives->vv, finite_vv, "rational VV finite difference", 1e-5);
+
+    const auto normal = (*result)->normal(u, v, cad::GeometryTolerance::defaults());
+    expect(normal.has_value(), "evaluate rational surface normal");
+    if (normal) {
+        expect(nearly_equal(cad::length(*normal), 1.0), "rational normal has unit length");
+        expect(nearly_equal(cad::dot(*normal, derivatives->u), 0.0, 1e-12),
+               "normal is perpendicular to U tangent");
+        expect(nearly_equal(cad::dot(*normal, derivatives->v), 0.0, 1e-12),
+               "normal is perpendicular to V tangent");
+    }
+}
+
+void test_singular_normal_and_derivative_errors() {
+    std::vector<ControlPoint> points(4, ControlPoint{{1.0, 2.0, 3.0}, 1.0});
+    auto result = NurbsSurface::create(2, 2, std::move(points));
+    expect(result.has_value(), "create geometrically singular surface");
+    if (!result) {
+        return;
+    }
+
+    const auto derivatives = (*result)->evaluate_derivatives(0.5, 0.5);
+    expect(derivatives.has_value(), "singular surface still has differential result");
+    if (derivatives) {
+        expect_vector(derivatives->u, {}, "singular U derivative is zero");
+        expect_vector(derivatives->v, {}, "singular V derivative is zero");
+    }
+    const auto normal = (*result)->normal(0.5, 0.5, cad::GeometryTolerance::defaults());
+    expect(!normal && normal.error() == CadError::DegenerateSurface,
+           "singular surface normal reports degeneracy");
+
+    const auto outside = (*result)->evaluate_derivatives(-0.1, 0.5);
+    expect(!outside && outside.error() == CadError::OutOfBounds,
+           "derivatives reject out-of-domain parameter");
+    const auto non_finite = (*result)->evaluate_derivatives(
+        std::numeric_limits<double>::quiet_NaN(),
+        0.5
+    );
+    expect(!non_finite && non_finite.error() == CadError::OutOfBounds,
+           "derivatives reject non-finite parameter");
+}
+
+void test_one_sided_repeated_knot_derivatives() {
+    std::vector<ControlPoint> points;
+    for (const double x : {0.0, 1.0, 2.0, 4.0, 5.0}) {
+        points.push_back({{x, 0.0, 0.0}, 1.0});
+        points.push_back({{x, 1.0, 0.0}, 1.0});
+    }
+    auto result = NurbsSurface::create(
+        5,
+        2,
+        2,
+        1,
+        std::move(points),
+        {0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0},
+        {0.0, 0.0, 1.0, 1.0}
+    );
+    expect(result.has_value(), "create repeated-knot derivative surface");
+    if (!result) {
+        return;
+    }
+
+    const auto derivatives = (*result)->evaluate_derivatives(0.5, 0.5);
+    expect(derivatives.has_value(), "evaluate one-sided repeated-knot derivatives");
+    if (derivatives) {
+        expect_vector(derivatives->u, {8.0, 0.0, 0.0},
+                      "internal knot uses right-hand U derivative");
+        expect_vector(derivatives->uu, {-8.0, 0.0, 0.0},
+                      "internal knot uses right-hand UU derivative");
+    }
+}
+
+void test_normal_independent_of_second_derivative_range() {
+    constexpr double domain = 1e-200;
+    std::vector<ControlPoint> points{
+        {{0.0, 0.0, 0.0}, 1.0}, {{0.0, 1.0, 0.0}, 1.0},
+        {{1.0, 0.0, 0.0}, 1.0}, {{1.0, 1.0, 0.0}, 1.0},
+        {{0.0, 0.0, 0.0}, 1.0}, {{0.0, 1.0, 0.0}, 1.0},
+    };
+    auto result = NurbsSurface::create(
+        3,
+        2,
+        2,
+        1,
+        std::move(points),
+        {0.0, 0.0, 0.0, domain, domain, domain},
+        {0.0, 0.0, 1.0, 1.0}
+    );
+    expect(result.has_value(), "create high-curvature parameterized surface");
+    if (!result) {
+        return;
+    }
+
+    const auto derivatives = (*result)->evaluate_derivatives(domain * 0.25, 0.5);
+    expect(!derivatives && derivatives.error() == CadError::DegenerateSurface,
+           "unrepresentable second derivative is rejected");
+    const auto normal = (*result)->normal(
+        domain * 0.25,
+        0.5,
+        cad::GeometryTolerance::defaults()
+    );
+    expect(normal.has_value(), "normal does not depend on second derivative range");
+    if (normal) {
+        expect_vector(*normal, {0.0, 0.0, 1.0}, "high-curvature surface normal");
+    }
+}
+
+void test_normal_angular_singularity_threshold() {
+    const auto tolerance = cad::GeometryTolerance::create(1e-9, 1e-12, 0.01, 1e-12);
+    expect(tolerance.has_value(), "create normal angular tolerance");
+    if (!tolerance) {
+        return;
+    }
+
+    const auto make_surface = [](double angle) {
+        const cad::Vector3 v_direction{std::cos(angle), std::sin(angle), 0.0};
+        return NurbsSurface::create(
+            2,
+            2,
+            std::vector<ControlPoint>{
+                {{0.0, 0.0, 0.0}, 1.0},
+                {{v_direction.x, v_direction.y, 0.0}, 1.0},
+                {{1.0, 0.0, 0.0}, 1.0},
+                {{1.0 + v_direction.x, v_direction.y, 0.0}, 1.0},
+            }
+        );
+    };
+
+    auto below = make_surface(0.01 - 1e-5);
+    auto above = make_surface(0.01 + 1e-5);
+    expect(below.has_value() && above.has_value(), "create angular-threshold surfaces");
+    if (below) {
+        const auto normal = (*below)->normal(0.5, 0.5, *tolerance);
+        expect(!normal && normal.error() == CadError::DegenerateSurface,
+               "normal rejects tangents below angular threshold");
+    }
+    if (above) {
+        const auto normal = (*above)->normal(0.5, 0.5, *tolerance);
+        expect(normal.has_value(), "normal accepts tangents above angular threshold");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -374,6 +615,12 @@ int main() {
     test_knot_validation_errors();
     test_high_dynamic_range_values();
     test_platform_dependent_range_guards();
+    test_planar_surface_derivatives_and_normals();
+    test_rational_derivatives_against_finite_differences();
+    test_singular_normal_and_derivative_errors();
+    test_one_sided_repeated_knot_derivatives();
+    test_normal_independent_of_second_derivative_range();
+    test_normal_angular_singularity_threshold();
 
     if (failures != 0) {
         std::cerr << failures << " test assertion(s) failed\n";

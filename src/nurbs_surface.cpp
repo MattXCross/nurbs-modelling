@@ -2,6 +2,7 @@
 #include "bspline_basis.h"
 #include "core.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <expected>
@@ -12,6 +13,46 @@
 #include <vector>
 
 namespace {
+
+struct LongVector3 {
+    long double x{0.0L};
+    long double y{0.0L};
+    long double z{0.0L};
+};
+
+struct HomogeneousDerivative {
+    LongVector3 xyz;
+    long double weight{0.0L};
+};
+
+LongVector3 operator-(LongVector3 left, LongVector3 right) {
+    return {left.x - right.x, left.y - right.y, left.z - right.z};
+}
+
+LongVector3 operator*(LongVector3 vector, long double scalar) {
+    return {vector.x * scalar, vector.y * scalar, vector.z * scalar};
+}
+
+LongVector3 operator/(LongVector3 vector, long double scalar) {
+    return {vector.x / scalar, vector.y / scalar, vector.z / scalar};
+}
+
+bool finite_and_representable(LongVector3 vector) {
+    constexpr long double lowest = std::numeric_limits<double>::lowest();
+    constexpr long double highest = std::numeric_limits<double>::max();
+    return std::isfinite(vector.x) && std::isfinite(vector.y) && std::isfinite(vector.z) &&
+        vector.x >= lowest && vector.x <= highest &&
+        vector.y >= lowest && vector.y <= highest &&
+        vector.z >= lowest && vector.z <= highest;
+}
+
+cad::Vector3 to_vector3(LongVector3 vector) {
+    return {
+        static_cast<double>(vector.x),
+        static_cast<double>(vector.y),
+        static_cast<double>(vector.z)
+    };
+}
 
 std::optional<NurbsSurfaceError> validate_control_point(
     const ControlPoint& point,
@@ -406,4 +447,170 @@ std::expected<Point3D, CadError> NurbsSurface::evaluate(double u, double v) cons
         static_cast<double>(result_y),
         static_cast<double>(result_z)
     };
+}
+
+std::expected<NurbsSurfaceDerivatives, CadError> NurbsSurface::evaluate_derivatives(
+    double u,
+    double v
+) const {
+    return evaluate_derivatives_impl(u, v, 2);
+}
+
+std::expected<NurbsSurfaceDerivatives, CadError> NurbsSurface::evaluate_derivatives_impl(
+    double u,
+    double v,
+    size_t derivative_order
+) const {
+    if (m_u_count == 0 || m_v_count == 0 ||
+        m_u_count > std::numeric_limits<size_t>::max() / m_v_count ||
+        m_control_points.size() != m_u_count * m_v_count ||
+        !std::ranges::all_of(m_control_points, [](const ControlPoint& point) {
+            return point.weight > 0.0 && std::isfinite(point.weight) &&
+                std::isfinite(point.position.x) && std::isfinite(point.position.y) &&
+                std::isfinite(point.position.z);
+        })) {
+        return std::unexpected(CadError::DegenerateSurface);
+    }
+
+    const auto u_evaluation = cad::evaluate_bspline_basis(
+        m_u_count,
+        m_u_degree,
+        m_u_knots,
+        u,
+        derivative_order
+    );
+    if (!u_evaluation) {
+        return std::unexpected(
+            u_evaluation.error() == cad::BSplineBasisError::parameter_out_of_domain
+                ? CadError::OutOfBounds
+                : CadError::DegenerateSurface
+        );
+    }
+    const auto v_evaluation = cad::evaluate_bspline_basis(
+        m_v_count,
+        m_v_degree,
+        m_v_knots,
+        v,
+        derivative_order
+    );
+    if (!v_evaluation) {
+        return std::unexpected(
+            v_evaluation.error() == cad::BSplineBasisError::parameter_out_of_domain
+                ? CadError::OutOfBounds
+                : CadError::DegenerateSurface
+        );
+    }
+
+    std::array<HomogeneousDerivative, 9> homogeneous{};
+    const auto derivative = [&homogeneous](std::size_t u_order, std::size_t v_order)
+        -> HomogeneousDerivative& {
+        return homogeneous[u_order * 3 + v_order];
+    };
+    const auto net = control_net_2d();
+    const std::size_t first_u = u_evaluation->first_control_point();
+    const std::size_t first_v = v_evaluation->first_control_point();
+    for (std::size_t u_order = 0; u_order <= derivative_order; ++u_order) {
+        const auto u_basis = u_evaluation->derivative(u_order);
+        for (std::size_t v_order = 0; v_order + u_order <= derivative_order; ++v_order) {
+            const auto v_basis = v_evaluation->derivative(v_order);
+            HomogeneousDerivative& value = derivative(u_order, v_order);
+            for (std::size_t i = 0; i <= m_u_degree; ++i) {
+                for (std::size_t j = 0; j <= m_v_degree; ++j) {
+                    const ControlPoint& point = net[first_u + i, first_v + j];
+                    const long double coefficient =
+                        u_basis[i] * v_basis[j] * static_cast<long double>(point.weight);
+                    value.xyz.x += static_cast<long double>(point.position.x) * coefficient;
+                    value.xyz.y += static_cast<long double>(point.position.y) * coefficient;
+                    value.xyz.z += static_cast<long double>(point.position.z) * coefficient;
+                    value.weight += coefficient;
+                }
+            }
+            if (!std::isfinite(value.xyz.x) || !std::isfinite(value.xyz.y) ||
+                !std::isfinite(value.xyz.z) || !std::isfinite(value.weight)) {
+                return std::unexpected(CadError::DegenerateSurface);
+            }
+        }
+    }
+
+    const HomogeneousDerivative& h00 = derivative(0, 0);
+    const HomogeneousDerivative& h10 = derivative(1, 0);
+    const HomogeneousDerivative& h01 = derivative(0, 1);
+    const HomogeneousDerivative& h20 = derivative(2, 0);
+    const HomogeneousDerivative& h11 = derivative(1, 1);
+    const HomogeneousDerivative& h02 = derivative(0, 2);
+    if (!std::isfinite(h00.weight) || h00.weight <= 0.0L) {
+        return std::unexpected(CadError::DegenerateSurface);
+    }
+
+    const LongVector3 position = h00.xyz / h00.weight;
+    const LongVector3 derivative_u = (h10.xyz - position * h10.weight) / h00.weight;
+    const LongVector3 derivative_v = (h01.xyz - position * h01.weight) / h00.weight;
+    LongVector3 derivative_uu{};
+    LongVector3 derivative_uv{};
+    LongVector3 derivative_vv{};
+    if (derivative_order >= 2) {
+        derivative_uu = (
+            h20.xyz - derivative_u * (2.0L * h10.weight) - position * h20.weight
+        ) / h00.weight;
+        derivative_uv = (
+            h11.xyz - derivative_v * h10.weight - derivative_u * h01.weight -
+            position * h11.weight
+        ) / h00.weight;
+        derivative_vv = (
+            h02.xyz - derivative_v * (2.0L * h01.weight) - position * h02.weight
+        ) / h00.weight;
+    }
+
+    if (!finite_and_representable(position) || !finite_and_representable(derivative_u) ||
+        !finite_and_representable(derivative_v) ||
+        (derivative_order >= 2 &&
+         (!finite_and_representable(derivative_uu) ||
+          !finite_and_representable(derivative_uv) ||
+          !finite_and_representable(derivative_vv)))) {
+        return std::unexpected(CadError::DegenerateSurface);
+    }
+
+    return NurbsSurfaceDerivatives{
+        .position = {
+            static_cast<double>(position.x),
+            static_cast<double>(position.y),
+            static_cast<double>(position.z)
+        },
+        .u = to_vector3(derivative_u),
+        .v = to_vector3(derivative_v),
+        .uu = to_vector3(derivative_uu),
+        .uv = to_vector3(derivative_uv),
+        .vv = to_vector3(derivative_vv)
+    };
+}
+
+std::expected<cad::Vector3, CadError> NurbsSurface::normal(
+    double u,
+    double v,
+    const cad::GeometryTolerance& tolerance
+) const {
+    const auto surface = evaluate_derivatives_impl(u, v, 1);
+    if (!surface) {
+        return std::unexpected(surface.error());
+    }
+
+    const auto unit_u = cad::normalized(surface->u);
+    const auto unit_v = cad::normalized(surface->v);
+    if (!unit_u || !unit_v) {
+        return std::unexpected(CadError::DegenerateSurface);
+    }
+    const cad::Vector3 cross_product = cad::cross(*unit_u, *unit_v);
+    const double collinearity_angle = std::atan2(
+        cad::length(cross_product),
+        std::abs(std::clamp(cad::dot(*unit_u, *unit_v), -1.0, 1.0))
+    );
+    if (!std::isfinite(collinearity_angle) ||
+        collinearity_angle <= tolerance.angular_radians()) {
+        return std::unexpected(CadError::DegenerateSurface);
+    }
+    const auto result = cad::normalized(cross_product);
+    if (!result) {
+        return std::unexpected(CadError::DegenerateSurface);
+    }
+    return *result;
 }
