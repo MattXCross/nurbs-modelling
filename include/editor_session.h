@@ -40,6 +40,8 @@ public:
     [[nodiscard]] std::string redo_description() const;
     [[nodiscard]] bool is_dirty() const;
     void mark_saved();
+    void commit_pending_edit();
+    void replace_document(Scene scene);
 
     [[nodiscard]] std::expected<EntityId, SceneMutationError> create_surface_entity(
         std::string name,

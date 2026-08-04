@@ -1,16 +1,20 @@
 #pragma once
 
 #include "editor_session.h"
+#include "document_io.h"
 
 #include <QMainWindow>
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
 class ControlPointInspectorWidget;
 class QAction;
+class QCloseEvent;
 class QDockWidget;
 class QLabel;
+class QString;
 class RaylibViewportWidget;
 class SceneOutlinerWidget;
 
@@ -21,8 +25,17 @@ public:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private:
+    void new_document();
+    void open_document();
+    [[nodiscard]] bool save_document();
+    [[nodiscard]] bool save_document_as();
+    [[nodiscard]] bool save_document_to(const std::filesystem::path& path);
+    [[nodiscard]] bool confirm_destructive_action();
+    void show_document_error(QString title, const DocumentError& error);
+    void refresh_window_title();
     void undo();
     void redo();
     void create_surface();
@@ -35,6 +48,7 @@ private:
     [[nodiscard]] std::string suggested_surface_name() const;
 
     EditorSession m_session;
+    std::optional<std::filesystem::path> m_document_path;
     RaylibViewportWidget* m_viewport{nullptr};
     QDockWidget* m_outliner_dock{nullptr};
     SceneOutlinerWidget* m_outliner{nullptr};

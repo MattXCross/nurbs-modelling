@@ -371,6 +371,27 @@ void EditorSession::mark_saved() {
     }
 }
 
+void EditorSession::commit_pending_edit() {
+    if (m_pending_edit.has_value()) {
+        finish_control_point_edit(m_pending_edit->field);
+    }
+}
+
+void EditorSession::replace_document(Scene scene) {
+    NotificationBatch notifications(*this);
+    m_pending_edit.reset();
+    m_selection.clear();
+    m_history.clear();
+    m_scene = std::move(scene);
+    notify(EditorChange{
+        .selection = true,
+        .entities = true,
+        .geometry = true,
+        .properties = true,
+        .history = true
+    });
+}
+
 std::expected<EntityId, SceneMutationError> EditorSession::create_surface_entity(
     std::string name,
     std::unique_ptr<NurbsSurface> surface

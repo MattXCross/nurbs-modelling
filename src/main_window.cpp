@@ -1,5 +1,6 @@
 #include "main_window.h"
 
+#include "document_io.h"
 #include "qt_create_surface_dialog.h"
 #include "qt_control_point_inspector.h"
 #include "qt_scene_outliner.h"
@@ -8,9 +9,12 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDockWidget>
 #include <QDialog>
 #include <QEvent>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QIcon>
 #include <QKeySequence>
 #include <QKeyEvent>
@@ -22,7 +26,9 @@
 #include <QToolBar>
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -72,6 +78,26 @@ MainWindow::MainWindow(QWidget* parent)
     auto* quit_action = new QAction("Quit", this);
     quit_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Quit));
     connect(quit_action, &QAction::triggered, this, &QWidget::close);
+
+    auto* new_action = new QAction(QIcon::fromTheme("document-new"), "New", this);
+    new_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::New));
+    connect(new_action, &QAction::triggered, this, [this] { new_document(); });
+
+    auto* open_action = new QAction(QIcon::fromTheme("document-open"), "Open...", this);
+    open_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Open));
+    connect(open_action, &QAction::triggered, this, [this] { open_document(); });
+
+    auto* save_action = new QAction(QIcon::fromTheme("document-save"), "Save", this);
+    save_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Save));
+    connect(save_action, &QAction::triggered, this, [this] { (void)save_document(); });
+
+    auto* save_as_action = new QAction(
+        QIcon::fromTheme("document-save-as"),
+        "Save As...",
+        this
+    );
+    save_as_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::SaveAs));
+    connect(save_as_action, &QAction::triggered, this, [this] { (void)save_document_as(); });
 
     m_undo_action = new QAction(QIcon::fromTheme("edit-undo"), "Undo", this);
     m_undo_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Undo));
@@ -129,6 +155,12 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     auto* file_menu = menuBar()->addMenu("File");
+    file_menu->addAction(new_action);
+    file_menu->addAction(open_action);
+    file_menu->addSeparator();
+    file_menu->addAction(save_action);
+    file_menu->addAction(save_as_action);
+    file_menu->addSeparator();
     file_menu->addAction(quit_action);
     auto* edit_menu = menuBar()->addMenu("Edit");
     edit_menu->addAction(m_undo_action);
@@ -214,6 +246,131 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
     }
 
     return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (confirm_destructive_action()) {
+        event->accept();
+    } else {
+        event->ignore();
+    }
+}
+
+void MainWindow::new_document() {
+    if (!confirm_destructive_action()) {
+        return;
+    }
+    m_session.replace_document(Scene{});
+    m_document_path.reset();
+    refresh_window_title();
+}
+
+void MainWindow::open_document() {
+    const QString selected = QFileDialog::getOpenFileName(
+        this,
+        "Open Nurbsman Document",
+        {},
+        "Nurbsman Documents (*.nurbsman);;All Files (*)"
+    );
+    if (selected.isEmpty() || !confirm_destructive_action()) {
+        return;
+    }
+
+    const std::filesystem::path path = selected.toStdString();
+    auto loaded = load_document(path);
+    if (!loaded) {
+        show_document_error("Open Document", loaded.error());
+        return;
+    }
+    m_session.replace_document(std::move(*loaded));
+    m_document_path = path;
+    refresh_window_title();
+}
+
+bool MainWindow::save_document() {
+    if (!m_document_path.has_value()) {
+        return save_document_as();
+    }
+    return save_document_to(*m_document_path);
+}
+
+bool MainWindow::save_document_as() {
+    const QString suggested = m_document_path.has_value()
+        ? QString::fromStdString(m_document_path->string())
+        : QString("Untitled.nurbsman");
+    const QString selected = QFileDialog::getSaveFileName(
+        this,
+        "Save Nurbsman Document",
+        suggested,
+        "Nurbsman Documents (*.nurbsman);;All Files (*)"
+    );
+    if (selected.isEmpty()) {
+        return false;
+    }
+
+    std::filesystem::path path = selected.toStdString();
+    if (!path.has_extension()) {
+        path += ".nurbsman";
+    }
+    return save_document_to(path);
+}
+
+bool MainWindow::save_document_to(const std::filesystem::path& path) {
+    m_session.commit_pending_edit();
+    const auto saved = ::save_document(m_session.scene(), path);
+    if (!saved) {
+        show_document_error("Save Document", saved.error());
+        return false;
+    }
+    m_document_path = path;
+    m_session.mark_saved();
+    refresh_window_title();
+    statusBar()->showMessage(
+        QString("Saved %1").arg(QString::fromStdString(path.filename().string())),
+        3000
+    );
+    return true;
+}
+
+bool MainWindow::confirm_destructive_action() {
+    if (!m_session.is_dirty()) {
+        return true;
+    }
+    const QMessageBox::StandardButton choice = QMessageBox::warning(
+        this,
+        "Unsaved Changes",
+        "Save changes to the current document?",
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save
+    );
+    if (choice == QMessageBox::Save) {
+        return save_document();
+    }
+    return choice == QMessageBox::Discard;
+}
+
+void MainWindow::show_document_error(QString title, const DocumentError& error) {
+    const QString path = error.file.empty()
+        ? QString("Document")
+        : QString::fromStdString(error.file.string());
+    const QString field = error.field.empty()
+        ? QString()
+        : QString("\nField: %1").arg(QString::fromStdString(error.field));
+    QMessageBox::critical(
+        this,
+        std::move(title),
+        QString("%1%2\n\n%3")
+            .arg(path, field, QString::fromStdString(error.message))
+    );
+}
+
+void MainWindow::refresh_window_title() {
+    const std::string file_name = m_document_path.has_value()
+        ? m_document_path->filename().string()
+        : "Untitled";
+    setWindowTitle(QString("%1%2 - Nurbsman")
+        .arg(QString::fromStdString(file_name))
+        .arg(m_session.is_dirty() ? "*" : ""));
 }
 
 void MainWindow::undo() {
@@ -305,6 +462,7 @@ void MainWindow::refresh_ui_state() {
     m_redo_action->setText(redo_description.empty()
         ? "Redo"
         : QString("Redo %1").arg(QString::fromStdString(redo_description)));
+    refresh_window_title();
 
     const std::optional<EntityId> selected_entity = selected_entity_id();
     const SceneNode* selected_node = selected_entity.has_value()

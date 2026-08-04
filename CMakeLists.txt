@@ -144,6 +144,13 @@ if(BUILD_TESTING)
     target_link_libraries(command_history_test PRIVATE cad_document)
     enable_project_warnings(command_history_test)
     add_test(NAME command_history_test COMMAND command_history_test)
+
+    add_executable(editor_session_test
+        tests/editor_session_test.cpp
+    )
+    target_link_libraries(editor_session_test PRIVATE cad_editor)
+    enable_project_warnings(editor_session_test)
+    add_test(NAME editor_session_test COMMAND editor_session_test)
 endif()
 
 add_executable(cad_app main.cpp)

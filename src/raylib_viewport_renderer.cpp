@@ -100,8 +100,9 @@ public:
 
             draw_control_net(*node.surface, selected_point);
             CachedSurface& cached = m_surface_cache[node.id.value];
-            if (cached.revision != node.geometry_revision) {
+            if (cached.surface != node.surface.get() || cached.revision != node.geometry_revision) {
                 cached.line_vertices = tessellate_wireframe(*node.surface, 100, 100);
+                cached.surface = node.surface.get();
                 cached.revision = node.geometry_revision;
             }
             for (std::size_t index = 0; index + 1 < cached.line_vertices.size(); index += 2) {
@@ -118,6 +119,7 @@ public:
 
 private:
     struct CachedSurface {
+        const NurbsSurface* surface{nullptr};
         std::uint64_t revision{0};
         std::vector<Vector3> line_vertices;
     };
