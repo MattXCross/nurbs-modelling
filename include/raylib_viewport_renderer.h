@@ -30,6 +30,7 @@ public:
         std::optional<EntityId> hovered_entity,
         std::span<const GizmoPrimitive> gizmos,
         const ViewportDisplaySettings& display_settings,
+        bool interactive_geometry_edit,
         int framebuffer_width,
         int framebuffer_height
     );

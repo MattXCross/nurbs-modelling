@@ -445,6 +445,7 @@ public:
         std::optional<EntityId> hovered_entity,
         std::span<const GizmoPrimitive> gizmos,
         const ViewportDisplaySettings& display_settings,
+        bool interactive_geometry_edit,
         int framebuffer_width,
         int framebuffer_height
     ) {
@@ -484,7 +485,15 @@ public:
         }
         for (const SceneNode& node : scene.nodes()) {
             if (!node.visible || node.surface == nullptr) continue;
-            GpuSurface* gpu = gpu_surface(*node.surface, node.geometry_revision);
+            const cad::SurfaceTessellationSettings& tessellation_settings =
+                interactive_geometry_edit
+                    ? m_interactive_tessellation_settings
+                    : m_tessellation_settings;
+            GpuSurface* gpu = gpu_surface(
+                *node.surface,
+                node.geometry_revision,
+                tessellation_settings
+            );
             if (gpu == nullptr || m_shader == 0) continue;
 
             const bool selected = selected_entity == node.id;
@@ -543,12 +552,16 @@ private:
         m_depth_bias_location = rlGetLocationUniform(m_shader, "depthBias");
     }
 
-    GpuSurface* gpu_surface(const NurbsSurface& surface, std::uint64_t geometry_revision) {
+    GpuSurface* gpu_surface(
+        const NurbsSurface& surface,
+        std::uint64_t geometry_revision,
+        const cad::SurfaceTessellationSettings& settings
+    ) {
         const std::uint64_t identity = surface.identity();
         auto found = m_gpu_surfaces.find(identity);
         if (found != m_gpu_surfaces.end() &&
             found->second.geometry_revision == geometry_revision &&
-            found->second.settings == m_tessellation_settings) {
+            found->second.settings == settings) {
             return found->second.vao == 0 ? nullptr : &found->second;
         }
         if (found != m_gpu_surfaces.end()) {
@@ -557,10 +570,10 @@ private:
         }
 
         m_mesh_cache.clear(surface);
-        const auto mesh = m_mesh_cache.get(surface, geometry_revision, m_tessellation_settings);
+        const auto mesh = m_mesh_cache.get(surface, geometry_revision, settings);
         GpuSurface uploaded{.geometry_revision = geometry_revision,
-                            .settings = m_tessellation_settings};
-        if (mesh) uploaded = upload_gpu_surface(**mesh, geometry_revision, m_tessellation_settings);
+                            .settings = settings};
+        if (mesh) uploaded = upload_gpu_surface(**mesh, geometry_revision, settings);
         auto [stored, inserted] = m_gpu_surfaces.emplace(identity, std::move(uploaded));
         (void)inserted;
         return stored->second.vao == 0 ? nullptr : &stored->second;
@@ -607,6 +620,12 @@ private:
     }
 
     cad::SurfaceTessellationSettings m_tessellation_settings{};
+    cad::SurfaceTessellationSettings m_interactive_tessellation_settings{
+        .chordal_tolerance = 0.12,
+        .normal_angle_tolerance_radians = 0.35,
+        .max_refinement_depth = 4,
+        .max_vertices = 65'536
+    };
     cad::SurfaceTessellationCache m_mesh_cache;
     std::unordered_map<std::uint64_t, GpuSurface> m_gpu_surfaces;
     unsigned int m_shader{0};
@@ -635,6 +654,7 @@ void RaylibViewportRenderer::render(
     std::optional<EntityId> hovered_entity,
     std::span<const GizmoPrimitive> gizmos,
     const ViewportDisplaySettings& display_settings,
+    bool interactive_geometry_edit,
     int framebuffer_width,
     int framebuffer_height
 ) {
@@ -646,6 +666,7 @@ void RaylibViewportRenderer::render(
         hovered_entity,
         gizmos,
         display_settings,
+        interactive_geometry_edit,
         framebuffer_width,
         framebuffer_height
     );

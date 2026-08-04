@@ -90,6 +90,9 @@ public:
     [[nodiscard]] bool rotation_active() const { return m_transform.rotation_active(); }
     [[nodiscard]] bool scale_active() const { return m_transform.scale_active(); }
     [[nodiscard]] bool transform_active() const { return m_transform.active(); }
+    [[nodiscard]] bool interactive_geometry_edit() const {
+        return transform_active() || pending_edit_has_preview();
+    }
     [[nodiscard]] TransformMode transform_mode() const { return m_transform.mode(); }
     [[nodiscard]] PivotMode pivot_mode() const { return m_transform.pivot_mode(); }
     [[nodiscard]] TransformOrientation transform_orientation() const {

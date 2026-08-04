@@ -114,7 +114,7 @@ RaylibViewportWidget::RaylibViewportWidget(EditorSession& session, QWidget* pare
     m_fps_timer.start();
     auto* repaint_timer = new QTimer(this);
     repaint_timer->setTimerType(Qt::PreciseTimer);
-    repaint_timer->setInterval(16);
+    repaint_timer->setInterval(0);
     connect(repaint_timer, &QTimer::timeout, this, QOverload<>::of(&RaylibViewportWidget::update));
     repaint_timer->start();
 }
@@ -209,6 +209,7 @@ void RaylibViewportWidget::paintGL() {
         m_session.hovered_entity_id(),
         gizmos,
         m_display_settings,
+        m_session.interactive_geometry_edit(),
         framebuffer_width,
         framebuffer_height
     );
@@ -319,7 +320,6 @@ void RaylibViewportWidget::dispatch_input(InputFrameSnapshot input) {
     if (!m_gizmos.process_input(input, m_session.camera())) {
         m_session.process_viewport_input(input);
     }
-    update();
 }
 
 void RaylibViewportWidget::cleanup_gl() {

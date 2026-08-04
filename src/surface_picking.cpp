@@ -10,6 +10,7 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -84,6 +85,11 @@ std::vector<SurfacePickHit> pick_surfaces(
 ) {
     std::vector<SurfacePickHit> hits;
     static cad::SurfaceTessellationCache mesh_cache;
+    struct CachedRevision {
+        std::uint64_t revision;
+        cad::SurfaceTessellationSettings settings;
+    };
+    static std::unordered_map<std::uint64_t, CachedRevision> cached_revisions;
     const cad::GeometryTolerance tolerance = cad::GeometryTolerance::defaults();
     for (const SceneNode& node : scene.nodes()) {
         if (!node.visible || node.surface == nullptr) {
@@ -92,6 +98,17 @@ std::vector<SurfacePickHit> pick_surfaces(
         const auto bounds = node.surface->control_bounds();
         if (!bounds || !cad::intersect_ray_aabb(ray, *bounds, tolerance)) {
             continue;
+        }
+        const std::uint64_t identity = node.surface->identity();
+        const auto cached = cached_revisions.find(identity);
+        if (cached == cached_revisions.end() ||
+            cached->second.revision != node.geometry_revision ||
+            cached->second.settings != tessellation_settings) {
+            mesh_cache.clear(*node.surface);
+            cached_revisions.insert_or_assign(
+                identity,
+                CachedRevision{node.geometry_revision, tessellation_settings}
+            );
         }
         const auto mesh = mesh_cache.get(
             *node.surface,

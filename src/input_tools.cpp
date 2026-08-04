@@ -10,6 +10,13 @@
 
 namespace {
 
+const cad::SurfaceTessellationSettings picking_tessellation_settings{
+    .chordal_tolerance = 0.15,
+    .normal_angle_tolerance_radians = 0.4,
+    .max_refinement_depth = 4,
+    .max_vertices = 65'536
+};
+
 cad::Point3 at_render_precision(cad::Point3 point) {
     return {
         static_cast<double>(static_cast<float>(point.x)),
@@ -52,13 +59,17 @@ void SurfaceSelectionTool::process_input(
     if (!m_enabled || !m_enabled()) {
         return;
     }
+    if (input.middle_mouse || input.right_mouse || input.mouse_wheel_delta != 0.0f) {
+        return;
+    }
     const auto ray = make_viewport_ray(
         input.mouse_position,
         input.screen_width,
         input.screen_height,
         camera_controller.camera()
     );
-    const std::vector<SurfacePickHit> hits = ray ? pick_surfaces(scene, *ray) :
+    const std::vector<SurfacePickHit> hits = ray
+        ? pick_surfaces(scene, *ray, picking_tessellation_settings) :
         std::vector<SurfacePickHit>{};
     if (m_on_hover) {
         m_on_hover(hits.empty() ? std::nullopt : std::optional{hits.front().entity});
