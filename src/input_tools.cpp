@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <optional>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -59,7 +61,296 @@ Vec2 project_to_viewport(
     };
 }
 
+double gizmo_world_scale(
+    cad::Point3 pivot,
+    const CameraState& camera,
+    int viewport_height
+) {
+    if (viewport_height <= 0) {
+        return 0.0;
+    }
+    const double depth = cad::distance(camera.position, pivot);
+    return depth * 2.0 * std::tan(
+        static_cast<double>(camera.vertical_fov_degrees) * std::numbers::pi / 360.0
+    ) * 80.0 / static_cast<double>(viewport_height);
+}
+
+double point_segment_distance(Vec2 point, Vec2 start, Vec2 end) {
+    const double x = static_cast<double>(end.x - start.x);
+    const double y = static_cast<double>(end.y - start.y);
+    const double length_squared = x * x + y * y;
+    if (length_squared == 0.0) {
+        return std::hypot(point.x - start.x, point.y - start.y);
+    }
+    const double parameter = std::clamp(
+        (static_cast<double>(point.x - start.x) * x +
+         static_cast<double>(point.y - start.y) * y) / length_squared,
+        0.0,
+        1.0
+    );
+    return std::hypot(
+        static_cast<double>(point.x - start.x) - parameter * x,
+        static_cast<double>(point.y - start.y) - parameter * y
+    );
+}
+
+std::optional<cad::Point3> ray_plane_point(
+    const cad::Ray3& ray,
+    cad::Point3 plane_point,
+    cad::Vector3 plane_normal
+) {
+    const double denominator = cad::dot(ray.direction(), plane_normal);
+    if (!std::isfinite(denominator) || std::abs(denominator) <= 1e-12) {
+        return std::nullopt;
+    }
+    const double parameter = cad::dot(plane_point - ray.origin(), plane_normal) / denominator;
+    if (!std::isfinite(parameter) || parameter < 0.0) {
+        return std::nullopt;
+    }
+    return ray.at(parameter);
+}
+
+cad::Vector3 axis_vector(TranslationConstraint constraint) {
+    switch (constraint) {
+        case TranslationConstraint::x: return {1.0, 0.0, 0.0};
+        case TranslationConstraint::y: return {0.0, 1.0, 0.0};
+        case TranslationConstraint::z: return {0.0, 0.0, 1.0};
+        default: return {};
+    }
+}
+
+cad::Vector3 plane_normal(TranslationConstraint constraint, const CameraState& camera) {
+    switch (constraint) {
+        case TranslationConstraint::xy: return {0.0, 0.0, 1.0};
+        case TranslationConstraint::xz: return {0.0, 1.0, 0.0};
+        case TranslationConstraint::yz: return {1.0, 0.0, 0.0};
+        case TranslationConstraint::screen:
+            return cad::normalized(camera.target - camera.position).value_or(cad::Vector3{});
+        default: return {};
+    }
+}
+
+cad::Vector3 snapped(cad::Vector3 delta, double increment) {
+    if (!std::isfinite(increment) || increment <= 0.0) {
+        return delta;
+    }
+    const auto snap = [increment](double value) {
+        return std::round(value / increment) * increment;
+    };
+    return {snap(delta.x), snap(delta.y), snap(delta.z)};
+}
+
+cad::Vector3 grid_snapped(cad::Point3 pivot, cad::Vector3 delta, double increment) {
+    if (!std::isfinite(increment) || increment <= 0.0) {
+        return delta;
+    }
+    const auto snap = [increment](double value) {
+        return std::round(value / increment) * increment;
+    };
+    const cad::Point3 target = pivot + delta;
+    return {
+        snap(target.x) - pivot.x,
+        snap(target.y) - pivot.y,
+        snap(target.z) - pivot.z
+    };
+}
+
 } // namespace
+
+TranslationTool::TranslationTool(
+    ActiveHandler active,
+    PivotHandler pivot,
+    BeginHandler begin,
+    PreviewHandler preview,
+    FinishHandler finish,
+    FinishHandler cancel,
+    double snap_increment
+)
+    : m_active(std::move(active)),
+      m_pivot(std::move(pivot)),
+      m_begin(std::move(begin)),
+      m_preview(std::move(preview)),
+      m_finish(std::move(finish)),
+      m_cancel(std::move(cancel)),
+      m_snap_increment(snap_increment) {}
+
+void TranslationTool::process_input(
+    const InputFrameSnapshot& input,
+    OrbitCameraController& camera_controller,
+    Scene&
+) {
+    if (input.escape_pressed && m_active && m_active()) {
+        m_dragging = false;
+        if (m_cancel) {
+            m_cancel();
+        }
+        return;
+    }
+
+    const CameraState& camera = camera_controller.camera();
+    if (input.left_mouse_pressed && m_active && !m_active() && m_pivot && m_begin) {
+        const auto pivot = m_pivot();
+        if (!pivot || input.screen_width <= 0 || input.screen_height <= 0) {
+            return;
+        }
+        const double scale = gizmo_world_scale(*pivot, camera, input.screen_height);
+        if (!std::isfinite(scale) || scale <= 0.0) {
+            return;
+        }
+        const Vec2 center = project_to_viewport(
+            *pivot,
+            camera,
+            input.screen_width,
+            input.screen_height
+        );
+        std::optional<TranslationConstraint> hit;
+        if (std::hypot(
+                input.mouse_position.x - center.x,
+                input.mouse_position.y - center.y
+            ) <= 9.0) {
+            hit = TranslationConstraint::screen;
+        }
+        const auto projected = [&](cad::Vector3 offset) {
+            return project_to_viewport(
+                *pivot + offset * scale,
+                camera,
+                input.screen_width,
+                input.screen_height
+            );
+        };
+        if (!hit) {
+            for (const auto& [constraint, first, second] : {
+                     std::tuple{TranslationConstraint::xy, cad::Vector3{1, 0, 0}, cad::Vector3{0, 1, 0}},
+                     std::tuple{TranslationConstraint::xz, cad::Vector3{1, 0, 0}, cad::Vector3{0, 0, 1}},
+                     std::tuple{TranslationConstraint::yz, cad::Vector3{0, 1, 0}, cad::Vector3{0, 0, 1}}
+                 }) {
+                const Vec2 handle = projected((first + second) * 0.28);
+                if (std::hypot(
+                        input.mouse_position.x - handle.x,
+                        input.mouse_position.y - handle.y
+                    ) <= 9.0) {
+                    hit = constraint;
+                    break;
+                }
+            }
+        }
+        if (!hit) {
+            for (const TranslationConstraint constraint : {
+                     TranslationConstraint::x,
+                     TranslationConstraint::y,
+                     TranslationConstraint::z
+                 }) {
+                const cad::Vector3 axis = axis_vector(constraint);
+                if (point_segment_distance(
+                        input.mouse_position,
+                        projected(axis * 0.4),
+                        projected(axis)
+                    ) <= 8.0) {
+                    hit = constraint;
+                    break;
+                }
+            }
+        }
+        if (!hit || !m_begin(*hit)) {
+            return;
+        }
+
+        m_constraint = *hit;
+        m_start_pivot = *pivot;
+        m_start_mouse = input.mouse_position;
+        m_gizmo_scale = scale;
+        m_dragging = true;
+        const cad::Vector3 axis = axis_vector(*hit);
+        if (axis != cad::Vector3{}) {
+            const Vec2 end = projected(axis);
+            const double x = end.x - center.x;
+            const double y = end.y - center.y;
+            m_axis_screen_length = std::hypot(x, y);
+            if (m_axis_screen_length <= 1e-6) {
+                m_cancel();
+                m_dragging = false;
+                return;
+            }
+            m_axis_screen_direction = {
+                static_cast<float>(x / m_axis_screen_length),
+                static_cast<float>(y / m_axis_screen_length)
+            };
+        } else {
+            m_plane_normal = plane_normal(*hit, camera);
+            const auto ray = make_viewport_ray(
+                input.mouse_position,
+                input.screen_width,
+                input.screen_height,
+                camera
+            );
+            const auto point = ray ? ray_plane_point(*ray, *pivot, m_plane_normal) : std::nullopt;
+            if (!point) {
+                m_cancel();
+                m_dragging = false;
+                return;
+            }
+            m_start_plane_point = *point;
+        }
+        return;
+    }
+
+    if (!m_dragging || !m_active || !m_active()) {
+        return;
+    }
+    if (input.left_mouse_released) {
+        m_dragging = false;
+        if (m_finish) {
+            m_finish();
+        }
+        return;
+    }
+
+    cad::Vector3 delta;
+    const cad::Vector3 axis = axis_vector(m_constraint);
+    if (axis != cad::Vector3{}) {
+        const double pixels =
+            static_cast<double>(input.mouse_position.x - m_start_mouse.x) *
+                m_axis_screen_direction.x +
+            static_cast<double>(input.mouse_position.y - m_start_mouse.y) *
+                m_axis_screen_direction.y;
+        delta = axis * (pixels * m_gizmo_scale / m_axis_screen_length);
+    } else {
+        const auto ray = make_viewport_ray(
+            input.mouse_position,
+            input.screen_width,
+            input.screen_height,
+            camera
+        );
+        const auto point = ray ? ray_plane_point(*ray, m_start_pivot, m_plane_normal) : std::nullopt;
+        if (!point) {
+            return;
+        }
+        delta = *point - m_start_plane_point;
+        switch (m_constraint) {
+            case TranslationConstraint::xy: delta.z = 0.0; break;
+            case TranslationConstraint::xz: delta.y = 0.0; break;
+            case TranslationConstraint::yz: delta.x = 0.0; break;
+            default: break;
+        }
+    }
+    if (input.modifiers.ctrl) {
+        delta = snapped(delta, m_snap_increment);
+    } else if (input.modifiers.shift) {
+        delta = grid_snapped(m_start_pivot, delta, m_snap_increment);
+        switch (m_constraint) {
+            case TranslationConstraint::x: delta.y = delta.z = 0.0; break;
+            case TranslationConstraint::y: delta.x = delta.z = 0.0; break;
+            case TranslationConstraint::z: delta.x = delta.y = 0.0; break;
+            case TranslationConstraint::xy: delta.z = 0.0; break;
+            case TranslationConstraint::xz: delta.y = 0.0; break;
+            case TranslationConstraint::yz: delta.x = 0.0; break;
+            default: break;
+        }
+    }
+    if (m_preview) {
+        (void)m_preview(delta);
+    }
+}
 
 ControlPointSelectionTool::ControlPointSelectionTool(
     EnabledHandler enabled,

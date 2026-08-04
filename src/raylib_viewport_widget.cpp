@@ -5,6 +5,7 @@
 #include "rlgl.h"
 
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLVersionFunctionsFactory>
@@ -145,6 +146,8 @@ void RaylibViewportWidget::paintGL() {
         m_session.selection().control_points(),
         m_session.selected_entity_id(),
         m_session.hovered_entity_id(),
+        m_session.selection_pivot(),
+        m_session.active_translation_constraint(),
         framebuffer_width,
         framebuffer_height
     );
@@ -223,6 +226,19 @@ void RaylibViewportWidget::wheelEvent(QWheelEvent* event) {
     }
     dispatch_input(input);
     event->accept();
+}
+
+void RaylibViewportWidget::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape && m_session.translation_active()) {
+        InputFrameSnapshot input;
+        input.screen_width = width();
+        input.screen_height = height();
+        input.escape_pressed = true;
+        dispatch_input(input);
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::keyPressEvent(event);
 }
 
 void RaylibViewportWidget::dispatch_input(InputFrameSnapshot input) {

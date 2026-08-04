@@ -10,6 +10,7 @@
 #include "scene.h"
 #include "selection.h"
 #include "surface_picking.h"
+#include "translation.h"
 
 class IInputTool {
 public:
@@ -40,6 +41,49 @@ public:
             camera_controller.zoom(input.mouse_wheel_delta);
         }
     }
+};
+
+class TranslationTool final : public IInputTool {
+public:
+    using ActiveHandler = std::move_only_function<bool()>;
+    using PivotHandler = std::move_only_function<std::optional<cad::Point3>()>;
+    using BeginHandler = std::move_only_function<bool(TranslationConstraint)>;
+    using PreviewHandler = std::move_only_function<bool(cad::Vector3)>;
+    using FinishHandler = std::move_only_function<void()>;
+
+    TranslationTool(
+        ActiveHandler active,
+        PivotHandler pivot,
+        BeginHandler begin,
+        PreviewHandler preview,
+        FinishHandler finish,
+        FinishHandler cancel,
+        double snap_increment = 0.5
+    );
+
+    void process_input(
+        const InputFrameSnapshot& input,
+        OrbitCameraController& camera_controller,
+        Scene& scene
+    ) override;
+
+private:
+    ActiveHandler m_active;
+    PivotHandler m_pivot;
+    BeginHandler m_begin;
+    PreviewHandler m_preview;
+    FinishHandler m_finish;
+    FinishHandler m_cancel;
+    TranslationConstraint m_constraint{TranslationConstraint::screen};
+    cad::Point3 m_start_pivot;
+    cad::Point3 m_start_plane_point;
+    cad::Vector3 m_plane_normal;
+    Vec2 m_start_mouse;
+    Vec2 m_axis_screen_direction;
+    double m_gizmo_scale{1.0};
+    double m_axis_screen_length{1.0};
+    double m_snap_increment{0.5};
+    bool m_dragging{false};
 };
 
 class ControlPointSelectionTool final : public IInputTool {

@@ -12,9 +12,12 @@
 #include <QCloseEvent>
 #include <QDockWidget>
 #include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QIcon>
 #include <QKeySequence>
 #include <QKeyEvent>
@@ -25,8 +28,10 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <span>
 #include <string>
@@ -154,6 +159,11 @@ MainWindow::MainWindow(QWidget* parent)
     );
     connect(m_create_surface_action, &QAction::triggered, this, [this] { create_surface(); });
 
+    m_translate_action = new QAction("Translate...", this);
+    connect(m_translate_action, &QAction::triggered, this, [this] {
+        translate_selected_numeric();
+    });
+
     m_delete_entity_action = new QAction(
         QIcon::fromTheme("edit-delete"),
         "Delete",
@@ -205,6 +215,8 @@ MainWindow::MainWindow(QWidget* parent)
     edit_menu->addAction(m_grow_point_selection_action);
     edit_menu->addAction(m_shrink_point_selection_action);
     edit_menu->addSeparator();
+    edit_menu->addAction(m_translate_action);
+    edit_menu->addSeparator();
     edit_menu->addAction(m_rename_entity_action);
     edit_menu->addAction(m_toggle_visibility_action);
     edit_menu->addAction(m_delete_entity_action);
@@ -223,6 +235,7 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->addAction(m_object_mode_action);
     toolbar->addAction(m_control_point_mode_action);
     toolbar->addAction(m_create_surface_action);
+    toolbar->addAction(m_translate_action);
     toolbar->addAction(m_delete_entity_action);
     toolbar->addSeparator();
     toolbar->addAction(m_undo_action);
@@ -231,7 +244,9 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->addAction(m_outliner_dock->toggleViewAction());
     toolbar->addAction(m_inspector_dock->toggleViewAction());
 
-    statusBar()->showMessage("LMB Select   MMB Orbit   Shift+MMB Pan   Wheel Zoom");
+    statusBar()->showMessage(
+        "LMB Select/Move   Ctrl Increment 0.5   Shift Grid 0.5   Esc Cancel   MMB Orbit   Shift+MMB Pan"
+    );
     m_mode_status = new QLabel(statusBar());
     statusBar()->addPermanentWidget(m_mode_status);
     m_selection_status = new QLabel(statusBar());
@@ -450,6 +465,44 @@ void MainWindow::create_surface() {
     (void)m_session.select_entity(EntitySelection{*entity});
 }
 
+void MainWindow::translate_selected_numeric() {
+    if (!m_session.selection_pivot().has_value()) {
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle("Translate Selection");
+    auto* form = new QFormLayout;
+    std::array<QDoubleSpinBox*, 3> fields{};
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        fields[index] = new QDoubleSpinBox(&dialog);
+        fields[index]->setRange(-1'000'000'000.0, 1'000'000'000.0);
+        fields[index]->setDecimals(6);
+        fields[index]->setSingleStep(0.5);
+    }
+    form->addRow("Delta X", fields[0]);
+    form->addRow("Delta Y", fields[1]);
+    form->addRow("Delta Z", fields[2]);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+    );
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addLayout(form);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    if (!m_session.translate_selection({
+            fields[0]->value(),
+            fields[1]->value(),
+            fields[2]->value()
+        })) {
+        QMessageBox::warning(this, "Translate Selection", "The translation could not be applied.");
+    }
+}
+
 void MainWindow::delete_selected_entity() {
     const std::optional<EntityId> entity = selected_entity_id();
     if (entity.has_value()) {
@@ -507,6 +560,7 @@ void MainWindow::refresh_ui_state() {
     m_select_point_column_action->setEnabled(!object_mode && has_point);
     m_grow_point_selection_action->setEnabled(!object_mode && has_point);
     m_shrink_point_selection_action->setEnabled(!object_mode && has_point);
+    m_translate_action->setEnabled(m_session.selection_pivot().has_value());
 
     m_undo_action->setEnabled(m_session.can_undo());
     m_redo_action->setEnabled(m_session.can_redo());

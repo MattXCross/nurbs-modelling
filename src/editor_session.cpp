@@ -82,6 +82,34 @@ bool apply_field_values(
     return true;
 }
 
+bool apply_control_points(
+    Scene& scene,
+    const std::vector<ControlPointSelection>& selections,
+    const std::vector<ControlPoint>& points
+) {
+    if (selections.size() != points.size()) {
+        return false;
+    }
+    std::vector<ControlPoint> originals;
+    originals.reserve(selections.size());
+    for (const ControlPointSelection selection : selections) {
+        const ControlPoint* point = scene.resolve(selection);
+        if (point == nullptr) {
+            return false;
+        }
+        originals.push_back(*point);
+    }
+    for (std::size_t index = 0; index < selections.size(); ++index) {
+        if (!scene.set_control_point(selections[index], points[index]).has_value()) {
+            for (std::size_t rollback = 0; rollback < index; ++rollback) {
+                (void)scene.set_control_point(selections[rollback], originals[rollback]);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
 class AppliedValuesCommand final : public ICommand {
 public:
     AppliedValuesCommand(
@@ -104,6 +132,30 @@ private:
     std::move_only_function<bool(const std::vector<double>&)> m_set_values;
     std::vector<double> m_initial_values;
     std::vector<double> m_final_values;
+};
+
+class AppliedControlPointsCommand final : public ICommand {
+public:
+    AppliedControlPointsCommand(
+        Scene& scene,
+        std::vector<ControlPointSelection> selections,
+        std::vector<ControlPoint> initial_points,
+        std::vector<ControlPoint> final_points
+    )
+        : m_scene(scene),
+          m_selections(std::move(selections)),
+          m_initial_points(std::move(initial_points)),
+          m_final_points(std::move(final_points)) {}
+
+    [[nodiscard]] std::string_view description() const override { return "Translate Selection"; }
+    bool undo() override { return apply_control_points(m_scene, m_selections, m_initial_points); }
+    bool redo() override { return apply_control_points(m_scene, m_selections, m_final_points); }
+
+private:
+    Scene& m_scene;
+    std::vector<ControlPointSelection> m_selections;
+    std::vector<ControlPoint> m_initial_points;
+    std::vector<ControlPoint> m_final_points;
 };
 
 class CreatedEntityCommand final : public ICommand {
@@ -271,14 +323,26 @@ EditorSession::EditorSession()
     }
 
     m_input_dispatcher.register_tools<CameraNavigationTool>();
+    m_input_dispatcher.register_tools<TranslationTool>(
+        [this] { return translation_active(); },
+        [this] { return selection_pivot(); },
+        [this](TranslationConstraint constraint) { return begin_translation(constraint); },
+        [this](cad::Vector3 delta) { return preview_translation(delta); },
+        [this] { (void)finish_translation(); },
+        [this] { (void)cancel_translation(); }
+    );
     m_input_dispatcher.register_tools<SurfaceSelectionTool>(
-        [this] { return m_selection_mode == SelectionMode::object; },
+        [this] {
+            return m_selection_mode == SelectionMode::object && !translation_active();
+        },
         [this](EntitySelection selection) { (void)select_entity(selection); },
         [this](std::optional<EntityId> entity) { set_hovered_entity(entity); },
         [this] { (void)clear_selection(); }
     );
     m_input_dispatcher.register_tools<ControlPointSelectionTool>(
-        [this] { return m_selection_mode == SelectionMode::control_point; },
+        [this] {
+            return m_selection_mode == SelectionMode::control_point && !translation_active();
+        },
         [this](ControlPointSelection selection, ModifierKeys modifiers) {
             (void)select_control_point(selection, selection_operation(modifiers));
         },
@@ -312,6 +376,7 @@ bool EditorSession::select_entity(EntitySelection selection) {
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     m_selection.select(selection);
     notify(EditorChange{.selection = true});
     return true;
@@ -337,6 +402,7 @@ bool EditorSession::select_control_points(
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     const Selection previous = m_selection.current();
     if (operation == SelectionOperation::replace) {
         m_selection.select(std::move(selections));
@@ -454,6 +520,158 @@ bool EditorSession::shrink_control_point_selection() {
     return select_control_points(std::move(shrunk));
 }
 
+std::vector<ControlPointSelection> EditorSession::translation_targets() const {
+    if (m_selection_mode == SelectionMode::control_point) {
+        const std::span selected = m_selection.control_points();
+        return {selected.begin(), selected.end()};
+    }
+    const EntitySelection* entity = m_selection.entity();
+    const SceneNode* node = entity == nullptr ? nullptr : m_scene.find_entity(entity->entity);
+    if (node == nullptr || node->surface == nullptr) {
+        return {};
+    }
+    std::vector<ControlPointSelection> targets;
+    targets.reserve(node->surface->u_count() * node->surface->v_count());
+    for (std::size_t u = 0; u < node->surface->u_count(); ++u) {
+        for (std::size_t v = 0; v < node->surface->v_count(); ++v) {
+            targets.push_back({entity->entity, u, v});
+        }
+    }
+    return targets;
+}
+
+std::optional<cad::Point3> EditorSession::selection_pivot() const {
+    const std::vector<ControlPointSelection> targets = translation_targets();
+    if (targets.empty()) {
+        return std::nullopt;
+    }
+    long double x = 0.0L;
+    long double y = 0.0L;
+    long double z = 0.0L;
+    for (const ControlPointSelection target : targets) {
+        const ControlPoint* point = m_scene.resolve(target);
+        if (point == nullptr) {
+            return std::nullopt;
+        }
+        x += point->position.x;
+        y += point->position.y;
+        z += point->position.z;
+    }
+    const long double count = static_cast<long double>(targets.size());
+    const cad::Point3 pivot{
+        static_cast<double>(x / count),
+        static_cast<double>(y / count),
+        static_cast<double>(z / count)
+    };
+    return cad::is_finite(pivot) ? std::optional{pivot} : std::nullopt;
+}
+
+bool EditorSession::begin_translation(TranslationConstraint constraint) {
+    NotificationBatch notifications(*this);
+    (void)cancel_pending_edit();
+    (void)cancel_translation();
+    std::vector<ControlPointSelection> targets = translation_targets();
+    if (targets.empty()) {
+        return false;
+    }
+    std::vector<ControlPoint> initial_points;
+    initial_points.reserve(targets.size());
+    for (const ControlPointSelection target : targets) {
+        const ControlPoint* point = m_scene.resolve(target);
+        if (point == nullptr) {
+            return false;
+        }
+        initial_points.push_back(*point);
+    }
+    m_pending_translation = PendingTranslation{
+        std::move(targets),
+        std::move(initial_points),
+        constraint,
+        {}
+    };
+    notify(EditorChange{.history = true});
+    return true;
+}
+
+bool EditorSession::preview_translation(cad::Vector3 delta) {
+    NotificationBatch notifications(*this);
+    if (!m_pending_translation.has_value() || !cad::is_finite(delta)) {
+        return false;
+    }
+    std::vector<ControlPoint> translated = m_pending_translation->initial_points;
+    for (ControlPoint& point : translated) {
+        point.position = point.position + delta;
+    }
+    if (!apply_control_points(m_scene, m_pending_translation->selections, translated)) {
+        return false;
+    }
+    m_pending_translation->delta = delta;
+    notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return true;
+}
+
+bool EditorSession::finish_translation() {
+    NotificationBatch notifications(*this);
+    if (!m_pending_translation.has_value()) {
+        return false;
+    }
+    PendingTranslation translation = std::move(*m_pending_translation);
+    m_pending_translation.reset();
+    if (translation.delta == cad::Vector3{}) {
+        notify(EditorChange{.history = true});
+        return false;
+    }
+    std::vector<ControlPoint> final_points;
+    final_points.reserve(translation.selections.size());
+    for (const ControlPointSelection selection : translation.selections) {
+        const ControlPoint* point = m_scene.resolve(selection);
+        if (point == nullptr) {
+            (void)apply_control_points(m_scene, translation.selections, translation.initial_points);
+            notify(EditorChange{.geometry = true, .properties = true, .history = true});
+            return false;
+        }
+        final_points.push_back(*point);
+    }
+    m_history.record_applied(std::make_unique<AppliedControlPointsCommand>(
+        m_scene,
+        std::move(translation.selections),
+        std::move(translation.initial_points),
+        std::move(final_points)
+    ));
+    notify(EditorChange{.history = true});
+    return true;
+}
+
+bool EditorSession::cancel_translation() {
+    if (!m_pending_translation.has_value()) {
+        return false;
+    }
+    PendingTranslation translation = std::move(*m_pending_translation);
+    m_pending_translation.reset();
+    const bool restored = apply_control_points(
+        m_scene,
+        translation.selections,
+        translation.initial_points
+    );
+    notify(EditorChange{
+        .geometry = restored,
+        .properties = restored,
+        .history = true
+    });
+    return restored;
+}
+
+bool EditorSession::translate_selection(cad::Vector3 delta) {
+    if (!begin_translation(TranslationConstraint::screen)) {
+        return false;
+    }
+    if (!preview_translation(delta)) {
+        (void)cancel_translation();
+        return false;
+    }
+    return finish_translation();
+}
+
 bool EditorSession::clear_selection() {
     NotificationBatch notifications(*this);
     if (m_selection.empty()) {
@@ -461,6 +679,7 @@ bool EditorSession::clear_selection() {
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     m_selection.clear();
     notify(EditorChange{.selection = true});
     return true;
@@ -473,6 +692,7 @@ bool EditorSession::set_selection_mode(SelectionMode mode) {
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     m_selection_mode = mode;
     if (mode == SelectionMode::control_point) {
         set_hovered_entity(std::nullopt);
@@ -493,6 +713,9 @@ bool EditorSession::set_selection_mode(SelectionMode mode) {
 
 bool EditorSession::undo() {
     NotificationBatch notifications(*this);
+    if (cancel_translation()) {
+        return true;
+    }
     if (cancel_pending_edit()) {
         return true;
     }
@@ -511,7 +734,7 @@ bool EditorSession::undo() {
 
 bool EditorSession::redo() {
     NotificationBatch notifications(*this);
-    if (m_pending_edit.has_value()) {
+    if (m_pending_edit.has_value() || m_pending_translation.has_value()) {
         return false;
     }
     if (!m_history.redo()) {
@@ -528,14 +751,21 @@ bool EditorSession::redo() {
 }
 
 bool EditorSession::can_undo() const {
-    return pending_edit_has_preview() || m_history.can_undo();
+    return (m_pending_translation.has_value() &&
+            m_pending_translation->delta != cad::Vector3{}) ||
+        pending_edit_has_preview() || m_history.can_undo();
 }
 
 bool EditorSession::can_redo() const {
-    return !m_pending_edit.has_value() && m_history.can_redo();
+    return !m_pending_edit.has_value() && !m_pending_translation.has_value() &&
+        m_history.can_redo();
 }
 
 std::string EditorSession::undo_description() const {
+    if (m_pending_translation.has_value() &&
+        m_pending_translation->delta != cad::Vector3{}) {
+        return "Translate Selection";
+    }
     if (pending_edit_has_preview()) {
         return std::string(field_description(m_pending_edit->field));
     }
@@ -547,7 +777,9 @@ std::string EditorSession::redo_description() const {
 }
 
 bool EditorSession::is_dirty() const {
-    return pending_edit_has_preview() || m_history.is_dirty();
+    return (m_pending_translation.has_value() &&
+            m_pending_translation->delta != cad::Vector3{}) ||
+        pending_edit_has_preview() || m_history.is_dirty();
 }
 
 void EditorSession::mark_saved() {
@@ -561,11 +793,15 @@ void EditorSession::commit_pending_edit() {
     if (m_pending_edit.has_value()) {
         finish_control_point_edit(m_pending_edit->field);
     }
+    if (m_pending_translation.has_value()) {
+        (void)finish_translation();
+    }
 }
 
 void EditorSession::replace_document(Scene scene) {
     NotificationBatch notifications(*this);
     m_pending_edit.reset();
+    m_pending_translation.reset();
     m_selection.clear();
     m_hovered_entity.reset();
     m_history.clear();
@@ -591,6 +827,7 @@ std::expected<EntityId, SceneMutationError> EditorSession::create_surface_entity
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     m_history.record_applied(std::make_unique<CreatedEntityCommand>(
         m_scene,
         *entity,
@@ -607,6 +844,7 @@ std::expected<bool, SceneMutationError> EditorSession::delete_entity(EntityId id
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     auto removed = m_scene.remove_entity(id);
     if (!removed.has_value()) {
         return std::unexpected(removed.error());
@@ -639,6 +877,7 @@ std::expected<bool, SceneMutationError> EditorSession::rename_entity(
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     std::string initial_name = node->name;
     auto renamed = m_scene.rename_entity(id, name);
     if (!renamed.has_value()) {
@@ -668,6 +907,7 @@ std::expected<bool, SceneMutationError> EditorSession::set_entity_visibility(
     }
 
     (void)cancel_pending_edit();
+    (void)cancel_translation();
     const bool initial_visibility = node->visible;
     auto changed = m_scene.set_entity_visibility(id, visible);
     if (!changed.has_value()) {

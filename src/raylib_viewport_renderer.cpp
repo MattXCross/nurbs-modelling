@@ -10,7 +10,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <numbers>
 #include <span>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -70,6 +72,70 @@ void draw_control_net(
     }
 }
 
+void draw_translation_gizmo(
+    cad::Point3 pivot,
+    const CameraState& camera,
+    std::optional<TranslationConstraint> active_constraint,
+    int framebuffer_height
+) {
+    if (framebuffer_height <= 0) {
+        return;
+    }
+    const double scale = cad::distance(camera.position, pivot) * 2.0 * std::tan(
+        static_cast<double>(camera.vertical_fov_degrees) * std::numbers::pi / 360.0
+    ) * 80.0 / static_cast<double>(framebuffer_height);
+    if (!std::isfinite(scale) || scale <= 0.0) {
+        return;
+    }
+    const Vector3 center = to_raylib(pivot);
+    const auto endpoint = [pivot, scale](cad::Vector3 axis, double length = 1.0) {
+        return to_raylib(pivot + axis * (scale * length));
+    };
+    const Color active_color = YELLOW;
+    DrawSphere(
+        center,
+        static_cast<float>(scale * 0.08),
+        active_constraint == TranslationConstraint::screen ? active_color : LIGHTGRAY
+    );
+    for (const auto& [constraint, axis, color] : {
+             std::tuple{TranslationConstraint::x, cad::Vector3{1.0, 0.0, 0.0}, RED},
+             std::tuple{TranslationConstraint::y, cad::Vector3{0.0, 1.0, 0.0}, GREEN},
+             std::tuple{TranslationConstraint::z, cad::Vector3{0.0, 0.0, 1.0}, BLUE}
+         }) {
+        const Color handle_color = active_constraint == constraint ? active_color : color;
+        DrawCylinderEx(
+            center,
+            endpoint(axis, 0.78),
+            static_cast<float>(scale * 0.025),
+            static_cast<float>(scale * 0.025),
+            8,
+            handle_color
+        );
+        DrawCylinderEx(
+            endpoint(axis, 0.72),
+            endpoint(axis),
+            static_cast<float>(scale * 0.09),
+            0.0f,
+            12,
+            handle_color
+        );
+    }
+    for (const auto& [constraint, first, second, color] : {
+             std::tuple{TranslationConstraint::xy, cad::Vector3{1, 0, 0}, cad::Vector3{0, 1, 0}, Fade(YELLOW, 0.65f)},
+             std::tuple{TranslationConstraint::xz, cad::Vector3{1, 0, 0}, cad::Vector3{0, 0, 1}, Fade(MAGENTA, 0.65f)},
+             std::tuple{TranslationConstraint::yz, cad::Vector3{0, 1, 0}, cad::Vector3{0, 0, 1}, Fade(SKYBLUE, 0.65f)}
+         }) {
+        const Color handle_color = active_constraint == constraint
+            ? active_color
+            : color;
+        const Vector3 a = endpoint(first * 0.18, 1.0);
+        const Vector3 b = endpoint((first + second) * 0.38, 1.0);
+        const Vector3 c = endpoint(second * 0.18, 1.0);
+        DrawTriangle3D(a, b, c, handle_color);
+        DrawTriangle3D(c, b, a, handle_color);
+    }
+}
+
 } // namespace
 
 class RaylibViewportRenderer::Impl {
@@ -80,6 +146,8 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
+        std::optional<cad::Point3> translation_pivot,
+        std::optional<TranslationConstraint> active_translation_constraint,
         int framebuffer_width,
         int framebuffer_height
     ) {
@@ -127,6 +195,14 @@ public:
                     surface_color
                 );
             }
+        }
+        if (translation_pivot) {
+            draw_translation_gizmo(
+                *translation_pivot,
+                camera,
+                active_translation_constraint,
+                framebuffer_height
+            );
         }
         rlDrawRenderBatchActive();
         rlDisableDepthTest();
@@ -216,6 +292,8 @@ void RaylibViewportRenderer::render(
     std::span<const ControlPointSelection> selected_points,
     std::optional<EntityId> selected_entity,
     std::optional<EntityId> hovered_entity,
+    std::optional<cad::Point3> translation_pivot,
+    std::optional<TranslationConstraint> active_translation_constraint,
     int framebuffer_width,
     int framebuffer_height
 ) {
@@ -225,6 +303,8 @@ void RaylibViewportRenderer::render(
         selected_points,
         selected_entity,
         hovered_entity,
+        translation_pivot,
+        active_translation_constraint,
         framebuffer_width,
         framebuffer_height
     );

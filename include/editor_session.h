@@ -7,6 +7,7 @@
 #include "orbit_camera.h"
 #include "scene.h"
 #include "selection.h"
+#include "translation.h"
 
 #include <functional>
 #include <optional>
@@ -19,6 +20,7 @@ public:
     enum class ControlPointField { position_x, position_y, position_z, weight };
     enum class SelectionMode { object, control_point };
     enum class SelectionOperation { replace, add, toggle };
+    using TranslationConstraint = ::TranslationConstraint;
 
     EditorSession();
 
@@ -44,6 +46,11 @@ public:
     [[nodiscard]] bool select_control_point_column();
     [[nodiscard]] bool grow_control_point_selection();
     [[nodiscard]] bool shrink_control_point_selection();
+    [[nodiscard]] bool begin_translation(TranslationConstraint constraint);
+    [[nodiscard]] bool preview_translation(cad::Vector3 delta);
+    [[nodiscard]] bool finish_translation();
+    [[nodiscard]] bool cancel_translation();
+    [[nodiscard]] bool translate_selection(cad::Vector3 delta);
     [[nodiscard]] bool clear_selection();
     [[nodiscard]] bool set_selection_mode(SelectionMode mode);
 
@@ -54,6 +61,13 @@ public:
     [[nodiscard]] std::string undo_description() const;
     [[nodiscard]] std::string redo_description() const;
     [[nodiscard]] bool is_dirty() const;
+    [[nodiscard]] bool translation_active() const { return m_pending_translation.has_value(); }
+    [[nodiscard]] std::optional<TranslationConstraint> active_translation_constraint() const {
+        return m_pending_translation
+            ? std::optional{m_pending_translation->constraint}
+            : std::nullopt;
+    }
+    [[nodiscard]] std::optional<cad::Point3> selection_pivot() const;
     void mark_saved();
     void commit_pending_edit();
     void replace_document(Scene scene);
@@ -102,9 +116,16 @@ private:
         ControlPointField field;
         std::vector<double> initial_values;
     };
+    struct PendingTranslation {
+        std::vector<ControlPointSelection> selections;
+        std::vector<ControlPoint> initial_points;
+        TranslationConstraint constraint;
+        cad::Vector3 delta;
+    };
 
     [[nodiscard]] bool cancel_pending_edit();
     [[nodiscard]] bool pending_edit_has_preview() const;
+    [[nodiscard]] std::vector<ControlPointSelection> translation_targets() const;
     void set_hovered_entity(std::optional<EntityId> entity);
     void clear_selection_for_entity(EntityId id);
     void notify(EditorChange change);
@@ -120,6 +141,7 @@ private:
     ChangeHandler m_change_handler;
     EditorChange m_pending_change;
     std::optional<PendingEdit> m_pending_edit;
+    std::optional<PendingTranslation> m_pending_translation;
     std::size_t m_notification_depth{0};
     bool m_notifying{false};
 };

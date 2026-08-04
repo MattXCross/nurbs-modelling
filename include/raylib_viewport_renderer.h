@@ -2,6 +2,7 @@
 
 #include "orbit_camera.h"
 #include "entity_id.h"
+#include "translation.h"
 
 #include <memory>
 #include <optional>
@@ -24,6 +25,8 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
+        std::optional<cad::Point3> translation_pivot,
+        std::optional<TranslationConstraint> active_translation_constraint,
         int framebuffer_width,
         int framebuffer_height
     );

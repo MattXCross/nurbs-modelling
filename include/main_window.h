@@ -39,6 +39,7 @@ private:
     void undo();
     void redo();
     void create_surface();
+    void translate_selected_numeric();
     void delete_selected_entity();
     void rename_selected_entity();
     void toggle_selected_entity_visibility();
@@ -64,6 +65,7 @@ private:
     QAction* m_grow_point_selection_action{nullptr};
     QAction* m_shrink_point_selection_action{nullptr};
     QAction* m_create_surface_action{nullptr};
+    QAction* m_translate_action{nullptr};
     QAction* m_delete_entity_action{nullptr};
     QAction* m_rename_entity_action{nullptr};
     QAction* m_toggle_visibility_action{nullptr};

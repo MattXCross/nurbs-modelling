@@ -165,6 +165,99 @@ void test_control_point_rectangle_selection() {
     expect(rectangle_modifiers.shift, "rectangle preserves additive modifier");
 }
 
+void test_translation_gizmo_screen_drag_and_cancel() {
+    Scene scene;
+    OrbitCameraController camera({0.0, 0.0, 10.0}, {0.0, 0.0, 0.0});
+    bool active = false;
+    bool finished = false;
+    bool canceled = false;
+    std::optional<cad::Vector3> preview;
+    std::optional<TranslationConstraint> started_constraint;
+    TranslationTool tool(
+        [&active] { return active; },
+        [] { return std::optional{cad::Point3{0.0, 0.0, 0.0}}; },
+        [&active, &started_constraint](TranslationConstraint constraint) {
+            active = true;
+            started_constraint = constraint;
+            return true;
+        },
+        [&preview](cad::Vector3 delta) {
+            preview = delta;
+            return true;
+        },
+        [&active, &finished] {
+            active = false;
+            finished = true;
+        },
+        [&active, &canceled] {
+            active = false;
+            canceled = true;
+        }
+    );
+    InputFrameSnapshot press{
+        .mouse_position = {400.0f, 300.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .left_mouse_pressed = true,
+        .modifiers = {}
+    };
+    tool.process_input(press, camera, scene);
+    expect(active, "center gizmo handle begins screen-plane drag");
+    expect(started_constraint == TranslationConstraint::screen, "center handle uses screen plane");
+    InputFrameSnapshot move{
+        .mouse_position = {440.0f, 300.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .modifiers = {.ctrl = true}
+    };
+    tool.process_input(move, camera, scene);
+    expect(preview.has_value(), "gizmo drag produces translation preview");
+    if (preview) {
+        expect(preview->x == 0.5, "Ctrl snaps screen drag to configured increment");
+        expect(preview->y == 0.0 && preview->z == 0.0, "screen drag follows camera plane");
+    }
+    InputFrameSnapshot release{
+        .mouse_position = {440.0f, 300.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse_released = true,
+        .modifiers = {}
+    };
+    tool.process_input(release, camera, scene);
+    expect(finished && !active, "mouse release commits gizmo drag");
+
+    InputFrameSnapshot axis_press = press;
+    axis_press.mouse_position = {460.0f, 300.0f};
+    tool.process_input(axis_press, camera, scene);
+    expect(started_constraint == TranslationConstraint::x, "X axis handle is pickable");
+    InputFrameSnapshot axis_move = move;
+    axis_move.mouse_position = {500.0f, 300.0f};
+    tool.process_input(axis_move, camera, scene);
+    expect(preview && preview->x == 0.5 && preview->y == 0.0 && preview->z == 0.0,
+        "axis drag is constrained and increment-snapped");
+    tool.process_input(release, camera, scene);
+
+    InputFrameSnapshot plane_press = press;
+    plane_press.mouse_position = {422.0f, 278.0f};
+    tool.process_input(plane_press, camera, scene);
+    expect(started_constraint == TranslationConstraint::xy, "XY plane handle is pickable");
+    InputFrameSnapshot plane_move = move;
+    plane_move.mouse_position = {442.0f, 268.0f};
+    plane_move.modifiers = {};
+    tool.process_input(plane_move, camera, scene);
+    expect(preview && preview->x > 0.0 && preview->y > 0.0 && preview->z == 0.0,
+        "plane drag remains in selected plane");
+    tool.process_input(release, camera, scene);
+
+    finished = false;
+    tool.process_input(press, camera, scene);
+    InputFrameSnapshot escape{.escape_pressed = true, .modifiers = {}};
+    tool.process_input(escape, camera, scene);
+    expect(canceled && !active && !finished, "Escape cancels gizmo drag");
+}
+
 } // namespace
 
 int main() {
@@ -172,6 +265,7 @@ int main() {
     test_nearest_and_hidden_surface_picking();
     test_hover_and_selection_cycling();
     test_control_point_rectangle_selection();
+    test_translation_gizmo_screen_drag_and_cancel();
 
     if (failures != 0) {
         std::cerr << failures << " surface picking test(s) failed\n";
