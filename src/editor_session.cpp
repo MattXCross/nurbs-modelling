@@ -241,7 +241,11 @@ EditorSession::EditorSession()
     m_input_dispatcher.register_tools<CameraNavigationTool>();
     m_input_dispatcher.register_tools<ControlPointSelectionTool>(
         [this](ControlPointSelection selection) {
-            (void)select_control_point(selection);
+            if (m_selection_mode == SelectionMode::object) {
+                (void)select_entity(EntitySelection{selection.entity});
+            } else {
+                (void)select_control_point(selection);
+            }
         },
         [this] {
             (void)clear_selection();
@@ -277,7 +281,8 @@ bool EditorSession::select_entity(EntitySelection selection) {
 
 bool EditorSession::select_control_point(ControlPointSelection selection) {
     NotificationBatch notifications(*this);
-    if (m_scene.resolve(selection) == nullptr) {
+    if (m_selection_mode != SelectionMode::control_point ||
+        m_scene.resolve(selection) == nullptr) {
         return false;
     }
 
@@ -302,6 +307,28 @@ bool EditorSession::clear_selection() {
     (void)cancel_pending_edit();
     m_selection.clear();
     notify(EditorChange{.selection = true});
+    return true;
+}
+
+bool EditorSession::set_selection_mode(SelectionMode mode) {
+    NotificationBatch notifications(*this);
+    if (m_selection_mode == mode) {
+        return false;
+    }
+
+    (void)cancel_pending_edit();
+    m_selection_mode = mode;
+    bool selection_changed = false;
+    if (mode == SelectionMode::object) {
+        if (const ControlPointSelection* point = m_selection.control_point()) {
+            m_selection.select(EntitySelection{point->entity});
+            selection_changed = true;
+        }
+    }
+    notify(EditorChange{
+        .selection = selection_changed,
+        .interaction_mode = true
+    });
     return true;
 }
 

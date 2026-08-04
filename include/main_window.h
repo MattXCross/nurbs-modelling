@@ -56,9 +56,12 @@ private:
     ControlPointInspectorWidget* m_inspector{nullptr};
     QAction* m_undo_action{nullptr};
     QAction* m_redo_action{nullptr};
+    QAction* m_object_mode_action{nullptr};
+    QAction* m_control_point_mode_action{nullptr};
     QAction* m_create_surface_action{nullptr};
     QAction* m_delete_entity_action{nullptr};
     QAction* m_rename_entity_action{nullptr};
     QAction* m_toggle_visibility_action{nullptr};
+    QLabel* m_mode_status{nullptr};
     QLabel* m_selection_status{nullptr};
 };

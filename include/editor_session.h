@@ -17,6 +17,7 @@ public:
     using ChangeHandler = std::move_only_function<void(EditorChange)>;
 
     enum class ControlPointField { position_x, position_y, position_z, weight };
+    enum class SelectionMode { object, control_point };
 
     EditorSession();
 
@@ -31,6 +32,7 @@ public:
     [[nodiscard]] bool select_entity(EntitySelection selection);
     [[nodiscard]] bool select_control_point(ControlPointSelection selection);
     [[nodiscard]] bool clear_selection();
+    [[nodiscard]] bool set_selection_mode(SelectionMode mode);
 
     [[nodiscard]] bool undo();
     [[nodiscard]] bool redo();
@@ -63,6 +65,7 @@ public:
 
     [[nodiscard]] const Scene& scene() const { return m_scene; }
     [[nodiscard]] const SelectionModel& selection() const { return m_selection; }
+    [[nodiscard]] SelectionMode selection_mode() const { return m_selection_mode; }
     [[nodiscard]] const CameraState& camera() const { return m_camera_controller.camera(); }
     [[nodiscard]] const ControlPoint* selected_control_point() const;
 
@@ -93,6 +96,7 @@ private:
 
     Scene m_scene;
     SelectionModel m_selection;
+    SelectionMode m_selection_mode{SelectionMode::object};
     CommandHistory m_history;
     OrbitCameraController m_camera_controller;
     InputToolDispatcher m_input_dispatcher;

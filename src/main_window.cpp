@@ -22,6 +22,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
 
@@ -107,12 +108,21 @@ MainWindow::MainWindow(QWidget* parent)
     m_redo_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Redo));
     connect(m_redo_action, &QAction::triggered, this, [this] { redo(); });
 
-    auto* select_action = new QAction("Select", this);
-    select_action->setCheckable(true);
-    select_action->setChecked(true);
+    m_object_mode_action = new QAction("Object", this);
+    m_object_mode_action->setCheckable(true);
+    m_object_mode_action->setChecked(true);
+    m_control_point_mode_action = new QAction("Control Points", this);
+    m_control_point_mode_action->setCheckable(true);
     auto* tool_group = new QActionGroup(this);
     tool_group->setExclusive(true);
-    tool_group->addAction(select_action);
+    tool_group->addAction(m_object_mode_action);
+    tool_group->addAction(m_control_point_mode_action);
+    connect(m_object_mode_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_selection_mode(EditorSession::SelectionMode::object);
+    });
+    connect(m_control_point_mode_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_selection_mode(EditorSession::SelectionMode::control_point);
+    });
 
     m_create_surface_action = new QAction(
         QIcon::fromTheme("list-add"),
@@ -181,7 +191,8 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->setObjectName("mainToolbar");
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    toolbar->addAction(select_action);
+    toolbar->addAction(m_object_mode_action);
+    toolbar->addAction(m_control_point_mode_action);
     toolbar->addAction(m_create_surface_action);
     toolbar->addAction(m_delete_entity_action);
     toolbar->addSeparator();
@@ -192,6 +203,8 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->addAction(m_inspector_dock->toggleViewAction());
 
     statusBar()->showMessage("LMB Select   MMB Orbit   Shift+MMB Pan   Wheel Zoom");
+    m_mode_status = new QLabel(statusBar());
+    statusBar()->addPermanentWidget(m_mode_status);
     m_selection_status = new QLabel(statusBar());
     statusBar()->addPermanentWidget(m_selection_status);
 
@@ -446,12 +459,20 @@ void MainWindow::handle_editor_change(EditorChange change) {
     if (change.selection || change.entities || change.geometry) {
         m_viewport->update();
     }
-    if (change.selection || change.history) {
+    if (change.selection || change.history || change.interaction_mode) {
         refresh_ui_state();
     }
 }
 
 void MainWindow::refresh_ui_state() {
+    const bool object_mode =
+        m_session.selection_mode() == EditorSession::SelectionMode::object;
+    const QSignalBlocker object_blocker(m_object_mode_action);
+    const QSignalBlocker point_blocker(m_control_point_mode_action);
+    m_object_mode_action->setChecked(object_mode);
+    m_control_point_mode_action->setChecked(!object_mode);
+    m_mode_status->setText(object_mode ? "Mode: Object" : "Mode: Control Points");
+
     m_undo_action->setEnabled(m_session.can_undo());
     m_redo_action->setEnabled(m_session.can_redo());
     const std::string undo_description = m_session.undo_description();

@@ -37,6 +37,10 @@ void test_commit_pending_edit() {
     EditorSession session;
     const SceneNode& node = session.scene().nodes().front();
     const ControlPointSelection selection{node.id, 0, 0};
+    expect(
+        session.set_selection_mode(EditorSession::SelectionMode::control_point),
+        "enter control-point mode"
+    );
     expect(session.select_control_point(selection), "select control point");
     expect(
         session.begin_control_point_edit(EditorSession::ControlPointField::position_x),
@@ -55,6 +59,64 @@ void test_commit_pending_edit() {
     if (session.selected_control_point() != nullptr) {
         expect(session.selected_control_point()->position.x == -3.0, "undo restores exact value");
     }
+}
+
+void test_selection_modes() {
+    EditorSession session;
+    const EntityId entity = session.scene().nodes().front().id;
+    const ControlPointSelection point{entity, 1, 1};
+    expect(
+        session.selection_mode() == EditorSession::SelectionMode::object,
+        "object mode is the default"
+    );
+    expect(!session.select_control_point(point), "object mode rejects control-point selection");
+    expect(
+        session.set_selection_mode(EditorSession::SelectionMode::control_point),
+        "switch to control-point mode"
+    );
+    expect(session.select_control_point(point), "control-point mode accepts point selection");
+    expect(
+        session.set_selection_mode(EditorSession::SelectionMode::object),
+        "switch to object mode"
+    );
+    expect(session.selection().control_point() == nullptr, "object mode removes point selection");
+    expect(
+        session.selection().entity() != nullptr &&
+            session.selection().entity()->entity == entity,
+        "object mode promotes point selection to its owner"
+    );
+    expect(
+        session.set_selection_mode(EditorSession::SelectionMode::control_point),
+        "return to control-point mode"
+    );
+    expect(
+        session.selection().entity() != nullptr &&
+            session.selection().entity()->entity == entity,
+        "entity remains the control-point editing context"
+    );
+}
+
+void test_mode_switch_cancels_preview() {
+    EditorSession session;
+    const EntityId entity = session.scene().nodes().front().id;
+    const ControlPointSelection point{entity, 0, 0};
+    (void)session.set_selection_mode(EditorSession::SelectionMode::control_point);
+    expect(session.select_control_point(point), "select preview point");
+    expect(
+        session.begin_control_point_edit(EditorSession::ControlPointField::position_y),
+        "begin preview before mode switch"
+    );
+    expect(
+        session.preview_control_point_edit(EditorSession::ControlPointField::position_y, 99.0),
+        "apply preview before mode switch"
+    );
+    expect(
+        session.set_selection_mode(EditorSession::SelectionMode::object),
+        "switch mode during preview"
+    );
+    const ControlPoint* restored = session.scene().resolve(point);
+    expect(restored != nullptr && restored->position.y == 0.0, "mode switch cancels preview");
+    expect(!session.can_undo(), "canceled preview creates no history entry");
 }
 
 void test_replace_document_clears_transient_state() {
@@ -90,6 +152,8 @@ void test_new_blank_document() {
 
 int main() {
     test_commit_pending_edit();
+    test_selection_modes();
+    test_mode_switch_cancels_preview();
     test_replace_document_clears_transient_state();
     test_new_blank_document();
 
