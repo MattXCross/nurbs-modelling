@@ -15,6 +15,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
+FetchContent_Declare(
+    nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS
     OpenGL
     OpenGLWidgets
@@ -31,10 +38,11 @@ target_include_directories(cad_geometry PUBLIC include)
 
 add_library(cad_document STATIC
     src/command_history.cpp
+    src/document_io.cpp
     src/scene.cpp
 )
 target_include_directories(cad_document PUBLIC include)
-target_link_libraries(cad_document PUBLIC cad_geometry)
+target_link_libraries(cad_document PUBLIC cad_geometry PRIVATE nlohmann_json::nlohmann_json)
 
 add_library(cad_editor STATIC
     src/editor_session.cpp
@@ -122,6 +130,13 @@ if(BUILD_TESTING)
     target_link_libraries(nurbs_surface_test PRIVATE cad_geometry)
     enable_project_warnings(nurbs_surface_test)
     add_test(NAME nurbs_surface_test COMMAND nurbs_surface_test)
+
+    add_executable(document_io_test
+        tests/document_io_test.cpp
+    )
+    target_link_libraries(document_io_test PRIVATE cad_document)
+    enable_project_warnings(document_io_test)
+    add_test(NAME document_io_test COMMAND document_io_test)
 endif()
 
 add_executable(cad_app main.cpp)

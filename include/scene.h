@@ -60,6 +60,12 @@ public:
         std::string name,
         std::unique_ptr<NurbsSurface> surface
     );
+    [[nodiscard]] std::expected<EntityId, SceneMutationError> add_entity(
+        EntityId id,
+        std::string name,
+        bool visible,
+        std::unique_ptr<NurbsSurface> surface
+    );
     [[nodiscard]] std::expected<RemovedSceneNode, SceneMutationError> remove_entity(EntityId id);
     [[nodiscard]] std::expected<void, SceneMutationError> restore_entity(
         RemovedSceneNode& removed

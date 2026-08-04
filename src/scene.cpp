@@ -13,18 +13,33 @@ std::expected<EntityId, SceneMutationError> Scene::add_entity(
     std::string name,
     std::unique_ptr<NurbsSurface> surface
 ) {
-    if (surface == nullptr) {
-        return std::unexpected(SceneMutationError::invalid_entity);
-    }
     if (m_next_entity_id == 0) {
         return std::unexpected(SceneMutationError::entity_id_exhausted);
     }
 
     const EntityId id{m_next_entity_id};
-    m_next_entity_id = m_next_entity_id == std::numeric_limits<std::uint64_t>::max()
-        ? 0
-        : m_next_entity_id + 1;
-    m_nodes.push_back(SceneNode{id, std::move(name), true, 1, std::move(surface)});
+    return add_entity(id, std::move(name), true, std::move(surface));
+}
+
+std::expected<EntityId, SceneMutationError> Scene::add_entity(
+    EntityId id,
+    std::string name,
+    bool visible,
+    std::unique_ptr<NurbsSurface> surface
+) {
+    if (!id || surface == nullptr) {
+        return std::unexpected(SceneMutationError::invalid_entity);
+    }
+    if (find_entity(id) != nullptr) {
+        return std::unexpected(SceneMutationError::duplicate_entity);
+    }
+
+    m_nodes.push_back(SceneNode{id, std::move(name), visible, 1, std::move(surface)});
+    if (m_next_entity_id != 0 && id.value >= m_next_entity_id) {
+        m_next_entity_id = id.value == std::numeric_limits<std::uint64_t>::max()
+            ? 0
+            : id.value + 1;
+    }
     return id;
 }
 

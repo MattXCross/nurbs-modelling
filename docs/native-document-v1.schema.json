@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nurbsman.local/schema/native-document-v1.schema.json",
+  "title": "Nurbsman native document version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "units", "coordinates", "entities"],
+  "properties": {
+    "format": { "const": "nurbsman" },
+    "version": { "const": 1 },
+    "generator": { "type": "string" },
+    "units": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["length"],
+      "properties": {
+        "length": { "const": "millimeter" }
+      }
+    },
+    "coordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handedness", "up_axis", "front_axis"],
+      "properties": {
+        "handedness": { "const": "right" },
+        "up_axis": { "const": "y" },
+        "front_axis": { "const": "-z" }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entity" }
+    }
+  },
+  "$defs": {
+    "finiteNumber": {
+      "type": "number"
+    },
+    "controlPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z", "weight"],
+      "properties": {
+        "x": { "$ref": "#/$defs/finiteNumber" },
+        "y": { "$ref": "#/$defs/finiteNumber" },
+        "z": { "$ref": "#/$defs/finiteNumber" },
+        "weight": {
+          "allOf": [
+            { "$ref": "#/$defs/finiteNumber" },
+            { "exclusiveMinimum": 0 }
+          ]
+        }
+      }
+    },
+    "nurbsSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "u_degree",
+        "v_degree",
+        "u_count",
+        "v_count",
+        "u_knots",
+        "v_knots",
+        "control_points"
+      ],
+      "properties": {
+        "type": { "const": "nurbs_surface" },
+        "u_degree": { "type": "integer", "minimum": 0 },
+        "v_degree": { "type": "integer", "minimum": 0 },
+        "u_count": { "type": "integer", "minimum": 1 },
+        "v_count": { "type": "integer", "minimum": 1 },
+        "u_knots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finiteNumber" }
+        },
+        "v_knots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finiteNumber" }
+        },
+        "control_points": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/controlPoint" }
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "visible", "geometry"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 20
+        },
+        "name": { "type": "string" },
+        "visible": { "type": "boolean" },
+        "geometry": { "$ref": "#/$defs/nurbsSurface" }
+      }
+    }
+  }
+}
