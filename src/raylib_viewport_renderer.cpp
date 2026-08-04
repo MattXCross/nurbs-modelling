@@ -68,6 +68,8 @@ public:
         const Scene& scene,
         const CameraState& camera,
         const ControlPoint* selected_point,
+        std::optional<EntityId> selected_entity,
+        std::optional<EntityId> hovered_entity,
         int framebuffer_width,
         int framebuffer_height
     ) {
@@ -105,8 +107,15 @@ public:
                 cached.surface = node.surface.get();
                 cached.revision = node.geometry_revision;
             }
+            const Color surface_color = selected_entity == node.id
+                ? GOLD
+                : (hovered_entity == node.id ? SKYBLUE : BLUE);
             for (std::size_t index = 0; index + 1 < cached.line_vertices.size(); index += 2) {
-                DrawLine3D(cached.line_vertices[index], cached.line_vertices[index + 1], BLUE);
+                DrawLine3D(
+                    cached.line_vertices[index],
+                    cached.line_vertices[index + 1],
+                    surface_color
+                );
             }
         }
         rlDrawRenderBatchActive();
@@ -195,6 +204,8 @@ void RaylibViewportRenderer::render(
     const Scene& scene,
     const CameraState& camera,
     const ControlPoint* selected_point,
+    std::optional<EntityId> selected_entity,
+    std::optional<EntityId> hovered_entity,
     int framebuffer_width,
     int framebuffer_height
 ) {
@@ -202,6 +213,8 @@ void RaylibViewportRenderer::render(
         scene,
         camera,
         selected_point,
+        selected_entity,
+        hovered_entity,
         framebuffer_width,
         framebuffer_height
     );

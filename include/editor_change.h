@@ -7,6 +7,7 @@ struct EditorChange {
     bool properties{false};
     bool history{false};
     bool interaction_mode{false};
+    bool hover{false};
 
     void merge(EditorChange other) {
         selection = selection || other.selection;
@@ -15,10 +16,11 @@ struct EditorChange {
         properties = properties || other.properties;
         history = history || other.history;
         interaction_mode = interaction_mode || other.interaction_mode;
+        hover = hover || other.hover;
     }
 
     [[nodiscard]] bool empty() const {
         return !selection && !entities && !geometry && !properties && !history &&
-            !interaction_mode;
+            !interaction_mode && !hover;
     }
 };

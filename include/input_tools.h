@@ -9,6 +9,7 @@
 #include "orbit_camera.h"
 #include "scene.h"
 #include "selection.h"
+#include "surface_picking.h"
 
 class IInputTool {
 public:
@@ -43,10 +44,12 @@ public:
 
 class ControlPointSelectionTool final : public IInputTool {
 public:
+    using EnabledHandler = std::move_only_function<bool()>;
     using SelectionHandler = std::move_only_function<void(ControlPointSelection)>;
     using ClearHandler = std::move_only_function<void()>;
 
     explicit ControlPointSelectionTool(
+        EnabledHandler enabled,
         SelectionHandler on_selection,
         ClearHandler on_clear = {},
         float hit_radius = 12.0f
@@ -59,9 +62,41 @@ public:
     ) override;
 
 private:
+    EnabledHandler m_enabled;
     SelectionHandler m_on_selection;
     ClearHandler m_on_clear;
     float m_hit_radius{12.0f};
+};
+
+class SurfaceSelectionTool final : public IInputTool {
+public:
+    using EnabledHandler = std::move_only_function<bool()>;
+    using SelectionHandler = std::move_only_function<void(EntitySelection)>;
+    using HoverHandler = std::move_only_function<void(std::optional<EntityId>)>;
+    using ClearHandler = std::move_only_function<void()>;
+
+    SurfaceSelectionTool(
+        EnabledHandler enabled,
+        SelectionHandler on_selection,
+        HoverHandler on_hover,
+        ClearHandler on_clear = {}
+    );
+
+    void process_input(
+        const InputFrameSnapshot& input,
+        OrbitCameraController& camera_controller,
+        Scene& scene
+    ) override;
+
+private:
+    EnabledHandler m_enabled;
+    SelectionHandler m_on_selection;
+    HoverHandler m_on_hover;
+    ClearHandler m_on_clear;
+    std::vector<EntityId> m_last_hits;
+    Vec2 m_last_click_position{};
+    std::size_t m_cycle_index{0};
+    bool m_has_last_click{false};
 };
 
 class InputToolDispatcher {

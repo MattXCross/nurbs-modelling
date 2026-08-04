@@ -62,20 +62,85 @@ Vec2 project_to_viewport(
 } // namespace
 
 ControlPointSelectionTool::ControlPointSelectionTool(
+    EnabledHandler enabled,
     SelectionHandler on_selection,
     ClearHandler on_clear,
     float hit_radius
 )
-    : m_on_selection(std::move(on_selection)),
+    : m_enabled(std::move(enabled)),
+      m_on_selection(std::move(on_selection)),
       m_on_clear(std::move(on_clear)),
-      m_hit_radius(std::max(0.0f, hit_radius)) {}
+       m_hit_radius(std::max(0.0f, hit_radius)) {}
+
+SurfaceSelectionTool::SurfaceSelectionTool(
+    EnabledHandler enabled,
+    SelectionHandler on_selection,
+    HoverHandler on_hover,
+    ClearHandler on_clear
+)
+    : m_enabled(std::move(enabled)),
+      m_on_selection(std::move(on_selection)),
+      m_on_hover(std::move(on_hover)),
+      m_on_clear(std::move(on_clear)) {}
+
+void SurfaceSelectionTool::process_input(
+    const InputFrameSnapshot& input,
+    OrbitCameraController& camera_controller,
+    Scene& scene
+) {
+    if (!m_enabled || !m_enabled()) {
+        return;
+    }
+    const auto ray = make_viewport_ray(
+        input.mouse_position,
+        input.screen_width,
+        input.screen_height,
+        camera_controller.camera()
+    );
+    const std::vector<SurfacePickHit> hits = ray ? pick_surfaces(scene, *ray) :
+        std::vector<SurfacePickHit>{};
+    if (m_on_hover) {
+        m_on_hover(hits.empty() ? std::nullopt : std::optional{hits.front().entity});
+    }
+    if (!input.left_mouse_pressed) {
+        return;
+    }
+    if (hits.empty()) {
+        m_last_hits.clear();
+        m_has_last_click = false;
+        if (m_on_clear) {
+            m_on_clear();
+        }
+        return;
+    }
+
+    std::vector<EntityId> entities;
+    entities.reserve(hits.size());
+    for (const SurfacePickHit& hit : hits) {
+        entities.push_back(hit.entity);
+    }
+    const float delta_x = input.mouse_position.x - m_last_click_position.x;
+    const float delta_y = input.mouse_position.y - m_last_click_position.y;
+    const bool same_location = m_has_last_click && delta_x * delta_x + delta_y * delta_y <= 16.0f;
+    if (same_location && entities == m_last_hits) {
+        m_cycle_index = (m_cycle_index + 1) % entities.size();
+    } else {
+        m_cycle_index = 0;
+    }
+    m_last_hits = entities;
+    m_last_click_position = input.mouse_position;
+    m_has_last_click = true;
+    if (m_on_selection) {
+        m_on_selection(EntitySelection{entities[m_cycle_index]});
+    }
+}
 
 void ControlPointSelectionTool::process_input(
     const InputFrameSnapshot& input,
     OrbitCameraController& camera_controller,
     Scene& scene
 ) {
-    if (!input.left_mouse_pressed) {
+    if (!m_enabled || !m_enabled() || !input.left_mouse_pressed) {
         return;
     }
 

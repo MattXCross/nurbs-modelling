@@ -47,6 +47,7 @@ target_link_libraries(cad_document PUBLIC cad_geometry PRIVATE nlohmann_json::nl
 add_library(cad_editor STATIC
     src/editor_session.cpp
     src/input_tools.cpp
+    src/surface_picking.cpp
 )
 target_include_directories(cad_editor PUBLIC include)
 target_link_libraries(cad_editor PUBLIC cad_document)
@@ -151,6 +152,13 @@ if(BUILD_TESTING)
     target_link_libraries(editor_session_test PRIVATE cad_editor)
     enable_project_warnings(editor_session_test)
     add_test(NAME editor_session_test COMMAND editor_session_test)
+
+    add_executable(surface_picking_test
+        tests/surface_picking_test.cpp
+    )
+    target_link_libraries(surface_picking_test PRIVATE cad_editor)
+    enable_project_warnings(surface_picking_test)
+    add_test(NAME surface_picking_test COMMAND surface_picking_test)
 endif()
 
 add_executable(cad_app main.cpp)

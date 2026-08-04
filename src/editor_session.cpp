@@ -239,13 +239,16 @@ EditorSession::EditorSession()
     }
 
     m_input_dispatcher.register_tools<CameraNavigationTool>();
+    m_input_dispatcher.register_tools<SurfaceSelectionTool>(
+        [this] { return m_selection_mode == SelectionMode::object; },
+        [this](EntitySelection selection) { (void)select_entity(selection); },
+        [this](std::optional<EntityId> entity) { set_hovered_entity(entity); },
+        [this] { (void)clear_selection(); }
+    );
     m_input_dispatcher.register_tools<ControlPointSelectionTool>(
+        [this] { return m_selection_mode == SelectionMode::control_point; },
         [this](ControlPointSelection selection) {
-            if (m_selection_mode == SelectionMode::object) {
-                (void)select_entity(EntitySelection{selection.entity});
-            } else {
-                (void)select_control_point(selection);
-            }
+            (void)select_control_point(selection);
         },
         [this] {
             (void)clear_selection();
@@ -318,6 +321,9 @@ bool EditorSession::set_selection_mode(SelectionMode mode) {
 
     (void)cancel_pending_edit();
     m_selection_mode = mode;
+    if (mode == SelectionMode::control_point) {
+        set_hovered_entity(std::nullopt);
+    }
     bool selection_changed = false;
     if (mode == SelectionMode::object) {
         if (const ControlPointSelection* point = m_selection.control_point()) {
@@ -408,6 +414,7 @@ void EditorSession::replace_document(Scene scene) {
     NotificationBatch notifications(*this);
     m_pending_edit.reset();
     m_selection.clear();
+    m_hovered_entity.reset();
     m_history.clear();
     m_scene = std::move(scene);
     notify(EditorChange{
@@ -415,7 +422,8 @@ void EditorSession::replace_document(Scene scene) {
         .entities = true,
         .geometry = true,
         .properties = true,
-        .history = true
+        .history = true,
+        .hover = true
     });
 }
 
@@ -452,6 +460,9 @@ std::expected<bool, SceneMutationError> EditorSession::delete_entity(EntityId id
     }
 
     clear_selection_for_entity(id);
+    if (m_hovered_entity == id) {
+        set_hovered_entity(std::nullopt);
+    }
     m_history.record_applied(std::make_unique<DeletedEntityCommand>(
         m_scene,
         std::move(*removed),
@@ -515,6 +526,9 @@ std::expected<bool, SceneMutationError> EditorSession::set_entity_visibility(
         initial_visibility,
         visible
     ));
+    if (!visible && m_hovered_entity == id) {
+        set_hovered_entity(std::nullopt);
+    }
     notify(EditorChange{.entities = true, .geometry = true, .history = true});
     return *changed;
 }
@@ -632,6 +646,30 @@ bool EditorSession::pending_edit_has_preview() const {
 const ControlPoint* EditorSession::selected_control_point() const {
     const ControlPointSelection* selection = m_selection.control_point();
     return selection == nullptr ? nullptr : m_scene.resolve(*selection);
+}
+
+std::optional<EntityId> EditorSession::selected_entity_id() const {
+    if (const EntitySelection* entity = m_selection.entity()) {
+        return entity->entity;
+    }
+    if (const ControlPointSelection* point = m_selection.control_point()) {
+        return point->entity;
+    }
+    return std::nullopt;
+}
+
+void EditorSession::set_hovered_entity(std::optional<EntityId> entity) {
+    if (entity.has_value()) {
+        const SceneNode* node = m_scene.find_entity(*entity);
+        if (node == nullptr || !node->visible) {
+            entity.reset();
+        }
+    }
+    if (m_hovered_entity == entity) {
+        return;
+    }
+    m_hovered_entity = entity;
+    notify(EditorChange{.hover = true});
 }
 
 void EditorSession::clear_selection_for_entity(EntityId id) {

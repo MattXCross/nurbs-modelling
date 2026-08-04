@@ -66,6 +66,8 @@ public:
     [[nodiscard]] const Scene& scene() const { return m_scene; }
     [[nodiscard]] const SelectionModel& selection() const { return m_selection; }
     [[nodiscard]] SelectionMode selection_mode() const { return m_selection_mode; }
+    [[nodiscard]] std::optional<EntityId> selected_entity_id() const;
+    [[nodiscard]] std::optional<EntityId> hovered_entity_id() const { return m_hovered_entity; }
     [[nodiscard]] const CameraState& camera() const { return m_camera_controller.camera(); }
     [[nodiscard]] const ControlPoint* selected_control_point() const;
 
@@ -90,6 +92,7 @@ private:
 
     [[nodiscard]] bool cancel_pending_edit();
     [[nodiscard]] bool pending_edit_has_preview() const;
+    void set_hovered_entity(std::optional<EntityId> entity);
     void clear_selection_for_entity(EntityId id);
     void notify(EditorChange change);
     void flush_notifications();
@@ -97,6 +100,7 @@ private:
     Scene m_scene;
     SelectionModel m_selection;
     SelectionMode m_selection_mode{SelectionMode::object};
+    std::optional<EntityId> m_hovered_entity;
     CommandHistory m_history;
     OrbitCameraController m_camera_controller;
     InputToolDispatcher m_input_dispatcher;

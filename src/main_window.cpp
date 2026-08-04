@@ -456,7 +456,7 @@ void MainWindow::handle_editor_change(EditorChange change) {
     if (change.selection || change.entities || change.properties) {
         m_inspector->refresh();
     }
-    if (change.selection || change.entities || change.geometry) {
+    if (change.selection || change.entities || change.geometry || change.hover) {
         m_viewport->update();
     }
     if (change.selection || change.history || change.interaction_mode) {

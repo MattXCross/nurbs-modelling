@@ -1,8 +1,10 @@
 #pragma once
 
 #include "orbit_camera.h"
+#include "entity_id.h"
 
 #include <memory>
+#include <optional>
 
 struct ControlPoint;
 class Scene;
@@ -19,6 +21,8 @@ public:
         const Scene& scene,
         const CameraState& camera,
         const ControlPoint* selected_point,
+        std::optional<EntityId> selected_entity,
+        std::optional<EntityId> hovered_entity,
         int framebuffer_width,
         int framebuffer_height
     );

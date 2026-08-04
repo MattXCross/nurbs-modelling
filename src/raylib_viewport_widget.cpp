@@ -143,6 +143,8 @@ void RaylibViewportWidget::paintGL() {
         m_session.scene(),
         m_session.camera(),
         m_session.selected_control_point(),
+        m_session.selected_entity_id(),
+        m_session.hovered_entity_id(),
         framebuffer_width,
         framebuffer_height
     );
