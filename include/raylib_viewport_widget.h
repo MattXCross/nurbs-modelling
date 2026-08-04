@@ -1,6 +1,7 @@
 #pragma once
 
 #include "input_frame.h"
+#include "gizmo_controller.h"
 #include "raylib_viewport_renderer.h"
 
 #include <QOpenGLWidget>
@@ -31,6 +32,7 @@ private:
     void dispatch_input(InputFrameSnapshot input);
 
     EditorSession& m_session;
+    GizmoController m_gizmos;
     RaylibViewportRenderer m_renderer;
     QOpenGLFunctions_3_3_Core* m_gl{nullptr};
     QPointF m_last_pointer_position;

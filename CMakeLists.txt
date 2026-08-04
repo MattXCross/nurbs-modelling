@@ -44,19 +44,28 @@ add_library(cad_document STATIC
 target_include_directories(cad_document PUBLIC include)
 target_link_libraries(cad_document PUBLIC cad_geometry PRIVATE nlohmann_json::nlohmann_json)
 
+add_library(cad_viewport STATIC
+    src/gizmo_controller.cpp
+    src/transform_gizmos.cpp
+    src/viewport_math.cpp
+)
+target_include_directories(cad_viewport PUBLIC include)
+target_link_libraries(cad_viewport PUBLIC cad_geometry)
+
 add_library(cad_editor STATIC
     src/editor_session.cpp
     src/input_tools.cpp
     src/surface_picking.cpp
+    src/transform_controller.cpp
 )
 target_include_directories(cad_editor PUBLIC include)
-target_link_libraries(cad_editor PUBLIC cad_document)
+target_link_libraries(cad_editor PUBLIC cad_document cad_viewport)
 
 add_library(cad_raylib_renderer STATIC
     src/raylib_viewport_renderer.cpp
 )
 target_include_directories(cad_raylib_renderer PUBLIC include)
-target_link_libraries(cad_raylib_renderer PUBLIC cad_document PRIVATE raylib)
+target_link_libraries(cad_raylib_renderer PUBLIC cad_document cad_viewport PRIVATE raylib)
 
 function(enable_project_warnings target)
     if(MSVC)
@@ -68,6 +77,7 @@ endfunction()
 
 enable_project_warnings(cad_geometry)
 enable_project_warnings(cad_document)
+enable_project_warnings(cad_viewport)
 enable_project_warnings(cad_editor)
 enable_project_warnings(cad_raylib_renderer)
 

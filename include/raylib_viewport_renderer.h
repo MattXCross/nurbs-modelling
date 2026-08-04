@@ -1,8 +1,8 @@
 #pragma once
 
+#include "gizmo.h"
 #include "orbit_camera.h"
 #include "entity_id.h"
-#include "translation.h"
 
 #include <memory>
 #include <optional>
@@ -25,11 +25,7 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
-        std::optional<TransformFrame> transform_frame,
-        TransformMode transform_mode,
-        std::optional<TranslationConstraint> active_translation_constraint,
-        std::optional<RotationConstraint> active_rotation_constraint,
-        std::optional<ScaleConstraint> active_scale_constraint,
+        std::span<const GizmoPrimitive> gizmos,
         int framebuffer_width,
         int framebuffer_height
     );

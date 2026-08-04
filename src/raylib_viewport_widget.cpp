@@ -1,6 +1,7 @@
 #include "raylib_viewport_widget.h"
 
 #include "editor_session.h"
+#include "transform_gizmos.h"
 
 #include "rlgl.h"
 
@@ -66,6 +67,46 @@ InputFrameSnapshot pointer_input(
 RaylibViewportWidget::RaylibViewportWidget(EditorSession& session, QWidget* parent)
     : QOpenGLWidget(parent),
       m_session(session) {
+    m_gizmos.add<TranslationGizmo>(
+        [this] { return m_session.active_translation_constraint(); },
+        [this] {
+            return m_session.transform_mode() == TransformMode::translate
+                ? m_session.transform_frame()
+                : std::nullopt;
+        },
+        [this](TranslationConstraint constraint) {
+            return m_session.begin_translation(constraint);
+        },
+        [this](cad::Vector3 delta) { return m_session.preview_translation(delta); },
+        [this] { (void)m_session.finish_translation(); },
+        [this] { (void)m_session.cancel_translation(); }
+    );
+    m_gizmos.add<RotationGizmo>(
+        [this] { return m_session.active_rotation_constraint(); },
+        [this] {
+            return m_session.transform_mode() == TransformMode::rotate
+                ? m_session.transform_frame()
+                : std::nullopt;
+        },
+        [this](RotationConstraint constraint, cad::Vector3 axis) {
+            return m_session.begin_rotation(constraint, axis);
+        },
+        [this](double angle) { return m_session.preview_rotation(angle); },
+        [this] { (void)m_session.finish_rotation(); },
+        [this] { (void)m_session.cancel_rotation(); }
+    );
+    m_gizmos.add<ScaleGizmo>(
+        [this] { return m_session.active_scale_constraint(); },
+        [this] {
+            return m_session.transform_mode() == TransformMode::scale
+                ? m_session.transform_frame()
+                : std::nullopt;
+        },
+        [this](ScaleConstraint constraint) { return m_session.begin_scale(constraint); },
+        [this](double factor) { return m_session.preview_scale(factor); },
+        [this] { (void)m_session.finish_scale(); },
+        [this] { (void)m_session.cancel_scale(); }
+    );
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -140,17 +181,14 @@ void RaylibViewportWidget::paintGL() {
     m_gl->glFrontFace(GL_CCW);
     m_gl->glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
+    const GizmoDrawList gizmos = m_gizmos.draw_data(m_session.camera(), framebuffer_height);
     m_renderer.render(
         m_session.scene(),
         m_session.camera(),
         m_session.selection().control_points(),
         m_session.selected_entity_id(),
         m_session.hovered_entity_id(),
-        m_session.transform_frame(),
-        m_session.transform_mode(),
-        m_session.active_translation_constraint(),
-        m_session.active_rotation_constraint(),
-        m_session.active_scale_constraint(),
+        gizmos,
         framebuffer_width,
         framebuffer_height
     );
@@ -245,7 +283,9 @@ void RaylibViewportWidget::keyPressEvent(QKeyEvent* event) {
 }
 
 void RaylibViewportWidget::dispatch_input(InputFrameSnapshot input) {
-    m_session.process_viewport_input(input);
+    if (!m_gizmos.process_input(input, m_session.camera())) {
+        m_session.process_viewport_input(input);
+    }
     update();
 }
 

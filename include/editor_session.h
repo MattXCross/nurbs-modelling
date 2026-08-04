@@ -8,6 +8,7 @@
 #include "scene.h"
 #include "selection.h"
 #include "translation.h"
+#include "transform_controller.h"
 
 #include <functional>
 #include <optional>
@@ -79,28 +80,26 @@ public:
     [[nodiscard]] std::string undo_description() const;
     [[nodiscard]] std::string redo_description() const;
     [[nodiscard]] bool is_dirty() const;
-    [[nodiscard]] bool translation_active() const { return m_pending_translation.has_value(); }
-    [[nodiscard]] bool rotation_active() const { return m_pending_rotation.has_value(); }
-    [[nodiscard]] bool scale_active() const { return m_pending_scale.has_value(); }
-    [[nodiscard]] bool transform_active() const {
-        return translation_active() || rotation_active() || scale_active();
-    }
-    [[nodiscard]] TransformMode transform_mode() const { return m_transform_mode; }
-    [[nodiscard]] PivotMode pivot_mode() const { return m_pivot_mode; }
+    [[nodiscard]] bool translation_active() const { return m_transform.translation_active(); }
+    [[nodiscard]] bool rotation_active() const { return m_transform.rotation_active(); }
+    [[nodiscard]] bool scale_active() const { return m_transform.scale_active(); }
+    [[nodiscard]] bool transform_active() const { return m_transform.active(); }
+    [[nodiscard]] TransformMode transform_mode() const { return m_transform.mode(); }
+    [[nodiscard]] PivotMode pivot_mode() const { return m_transform.pivot_mode(); }
     [[nodiscard]] TransformOrientation transform_orientation() const {
-        return m_transform_orientation;
+        return m_transform.orientation();
     }
-    [[nodiscard]] std::optional<TransformFrame> transform_frame() const;
+    [[nodiscard]] std::optional<TransformFrame> transform_frame() const {
+        return m_transform.frame();
+    }
     [[nodiscard]] std::optional<TranslationConstraint> active_translation_constraint() const {
-        return m_pending_translation
-            ? std::optional{m_pending_translation->constraint}
-            : std::nullopt;
+        return m_transform.translation_constraint();
     }
     [[nodiscard]] std::optional<RotationConstraint> active_rotation_constraint() const {
-        return m_pending_rotation ? std::optional{m_pending_rotation->constraint} : std::nullopt;
+        return m_transform.rotation_constraint();
     }
     [[nodiscard]] std::optional<ScaleConstraint> active_scale_constraint() const {
-        return m_pending_scale ? std::optional{m_pending_scale->constraint} : std::nullopt;
+        return m_transform.scale_constraint();
     }
     [[nodiscard]] std::optional<cad::Point3> selection_pivot() const;
     void mark_saved();
@@ -151,33 +150,10 @@ private:
         ControlPointField field;
         std::vector<double> initial_values;
     };
-    struct PendingTranslation {
-        std::vector<ControlPointSelection> selections;
-        std::vector<ControlPoint> initial_points;
-        TranslationConstraint constraint;
-        cad::Vector3 delta;
-    };
-    struct PendingRotation {
-        std::vector<ControlPointSelection> selections;
-        std::vector<ControlPoint> initial_points;
-        RotationConstraint constraint;
-        cad::Vector3 axis;
-        cad::Point3 pivot;
-        double angle_radians{0.0};
-    };
-    struct PendingScale {
-        std::vector<ControlPointSelection> selections;
-        std::vector<ControlPoint> initial_points;
-        ScaleConstraint constraint;
-        cad::Vector3 axis;
-        cad::Point3 pivot;
-        double factor{1.0};
-    };
 
     [[nodiscard]] bool cancel_pending_edit();
     [[nodiscard]] bool pending_edit_has_preview() const;
     [[nodiscard]] bool cancel_active_transform();
-    [[nodiscard]] std::vector<ControlPointSelection> translation_targets() const;
     void set_hovered_entity(std::optional<EntityId> entity);
     void clear_selection_for_entity(EntityId id);
     void notify(EditorChange change);
@@ -186,19 +162,14 @@ private:
     Scene m_scene;
     SelectionModel m_selection;
     SelectionMode m_selection_mode{SelectionMode::object};
-    TransformMode m_transform_mode{TransformMode::translate};
-    PivotMode m_pivot_mode{PivotMode::selection_center};
-    TransformOrientation m_transform_orientation{TransformOrientation::world};
     std::optional<EntityId> m_hovered_entity;
     CommandHistory m_history;
+    TransformController m_transform;
     OrbitCameraController m_camera_controller;
     InputToolDispatcher m_input_dispatcher;
     ChangeHandler m_change_handler;
     EditorChange m_pending_change;
     std::optional<PendingEdit> m_pending_edit;
-    std::optional<PendingTranslation> m_pending_translation;
-    std::optional<PendingRotation> m_pending_rotation;
-    std::optional<PendingScale> m_pending_scale;
     std::size_t m_notification_depth{0};
     bool m_notifying{false};
 };

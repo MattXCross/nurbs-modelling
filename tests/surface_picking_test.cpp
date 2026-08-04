@@ -7,13 +7,16 @@
 #include "orbit_camera.h"
 #include "scene.h"
 #include "selection.h"
+#include "transform_gizmos.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 namespace {
 
@@ -173,8 +176,10 @@ void test_translation_gizmo_screen_drag_and_cancel() {
     bool canceled = false;
     std::optional<cad::Vector3> preview;
     std::optional<TranslationConstraint> started_constraint;
-    TranslationTool tool(
-        [&active] { return active; },
+    TranslationGizmo tool(
+        [&active, &started_constraint] {
+            return active ? started_constraint : std::nullopt;
+        },
         [] { return std::optional{TransformFrame{.pivot = {0.0, 0.0, 0.0}}}; },
         [&active, &started_constraint](TranslationConstraint constraint) {
             active = true;
@@ -202,7 +207,8 @@ void test_translation_gizmo_screen_drag_and_cancel() {
         .left_mouse_pressed = true,
         .modifiers = {}
     };
-    tool.process_input(press, camera, scene);
+    expect(tool.process_input(press, camera.camera()),
+        "gizmo consumes the press that starts a drag");
     expect(active, "center gizmo handle begins screen-plane drag");
     expect(started_constraint == TranslationConstraint::screen, "center handle uses screen plane");
     InputFrameSnapshot move{
@@ -212,7 +218,7 @@ void test_translation_gizmo_screen_drag_and_cancel() {
         .left_mouse = true,
         .modifiers = {.ctrl = true}
     };
-    tool.process_input(move, camera, scene);
+    (void)tool.process_input(move, camera.camera());
     expect(preview.has_value(), "gizmo drag produces translation preview");
     if (preview) {
         expect(preview->x == 0.5, "Ctrl snaps screen drag to configured increment");
@@ -225,36 +231,36 @@ void test_translation_gizmo_screen_drag_and_cancel() {
         .left_mouse_released = true,
         .modifiers = {}
     };
-    tool.process_input(release, camera, scene);
+    (void)tool.process_input(release, camera.camera());
     expect(finished && !active, "mouse release commits gizmo drag");
 
     InputFrameSnapshot axis_press = press;
     axis_press.mouse_position = {460.0f, 300.0f};
-    tool.process_input(axis_press, camera, scene);
+    (void)tool.process_input(axis_press, camera.camera());
     expect(started_constraint == TranslationConstraint::x, "X axis handle is pickable");
     InputFrameSnapshot axis_move = move;
     axis_move.mouse_position = {500.0f, 300.0f};
-    tool.process_input(axis_move, camera, scene);
+    (void)tool.process_input(axis_move, camera.camera());
     expect(preview && preview->x == 0.5 && preview->y == 0.0 && preview->z == 0.0,
         "axis drag is constrained and increment-snapped");
-    tool.process_input(release, camera, scene);
+    (void)tool.process_input(release, camera.camera());
 
     InputFrameSnapshot plane_press = press;
     plane_press.mouse_position = {422.0f, 278.0f};
-    tool.process_input(plane_press, camera, scene);
+    (void)tool.process_input(plane_press, camera.camera());
     expect(started_constraint == TranslationConstraint::xy, "XY plane handle is pickable");
     InputFrameSnapshot plane_move = move;
     plane_move.mouse_position = {442.0f, 268.0f};
     plane_move.modifiers = {};
-    tool.process_input(plane_move, camera, scene);
+    (void)tool.process_input(plane_move, camera.camera());
     expect(preview && preview->x > 0.0 && preview->y > 0.0 && preview->z == 0.0,
         "plane drag remains in selected plane");
-    tool.process_input(release, camera, scene);
+    (void)tool.process_input(release, camera.camera());
 
     finished = false;
-    tool.process_input(press, camera, scene);
+    (void)tool.process_input(press, camera.camera());
     InputFrameSnapshot escape{.escape_pressed = true, .modifiers = {}};
-    tool.process_input(escape, camera, scene);
+    (void)tool.process_input(escape, camera.camera());
     expect(canceled && !active && !finished, "Escape cancels gizmo drag");
 }
 
@@ -264,8 +270,10 @@ void test_rotation_and_scale_gizmo_controls() {
     bool rotation_active = false;
     std::optional<RotationConstraint> rotation_constraint;
     std::optional<double> angle;
-    RotationTool rotation(
-        [&rotation_active] { return rotation_active; },
+    RotationGizmo rotation(
+        [&rotation_active, &rotation_constraint] {
+            return rotation_active ? rotation_constraint : std::nullopt;
+        },
         [] { return std::optional{TransformFrame{.pivot = {0, 0, 0}}}; },
         [&rotation_active, &rotation_constraint](RotationConstraint constraint, cad::Vector3) {
             rotation_active = true;
@@ -284,7 +292,7 @@ void test_rotation_and_scale_gizmo_controls() {
         .left_mouse_pressed = true,
         .modifiers = {}
     };
-    rotation.process_input(ring_press, camera, scene);
+    (void)rotation.process_input(ring_press, camera.camera());
     expect(rotation_constraint == RotationConstraint::screen,
         "outer rotation ring selects camera-plane rotation");
     InputFrameSnapshot ring_move{
@@ -294,15 +302,17 @@ void test_rotation_and_scale_gizmo_controls() {
         .left_mouse = true,
         .modifiers = {.ctrl = true}
     };
-    rotation.process_input(ring_move, camera, scene);
+    (void)rotation.process_input(ring_move, camera.camera());
     expect(angle && std::abs(*angle - std::numbers::pi / 2.0) < 1e-12,
         "rotation ring drag snaps to 15-degree increments");
 
     bool scale_active = false;
     std::optional<ScaleConstraint> scale_constraint;
     std::optional<double> factor;
-    ScaleTool scale(
-        [&scale_active] { return scale_active; },
+    ScaleGizmo scale(
+        [&scale_active, &scale_constraint] {
+            return scale_active ? scale_constraint : std::nullopt;
+        },
         [] { return std::optional{TransformFrame{.pivot = {0, 0, 0}}}; },
         [&scale_active, &scale_constraint](ScaleConstraint constraint) {
             scale_active = true;
@@ -321,7 +331,7 @@ void test_rotation_and_scale_gizmo_controls() {
         .left_mouse_pressed = true,
         .modifiers = {}
     };
-    scale.process_input(scale_press, camera, scene);
+    (void)scale.process_input(scale_press, camera.camera());
     expect(scale_constraint == ScaleConstraint::x, "box-ended X scale handle is pickable");
     InputFrameSnapshot scale_move{
         .mouse_position = {500.0f, 300.0f},
@@ -330,7 +340,7 @@ void test_rotation_and_scale_gizmo_controls() {
         .left_mouse = true,
         .modifiers = {.ctrl = true}
     };
-    scale.process_input(scale_move, camera, scene);
+    (void)scale.process_input(scale_move, camera.camera());
     expect(factor && *factor == 1.5, "axis scale drag snaps factor to tenths");
 }
 
@@ -345,8 +355,12 @@ void test_translation_uses_oriented_frame() {
         .y = {1, 0, 0},
         .z = {0, 0, -1}
     };
-    TranslationTool tool(
-        [&active] { return active; },
+    TranslationGizmo tool(
+        [&active] {
+            return active
+                ? std::optional{TranslationConstraint::x}
+                : std::nullopt;
+        },
         [frame] { return std::optional{frame}; },
         [&active](TranslationConstraint constraint) {
             active = constraint == TranslationConstraint::x;
@@ -364,7 +378,7 @@ void test_translation_uses_oriented_frame() {
         .left_mouse_pressed = true,
         .modifiers = {}
     };
-    tool.process_input(press, camera, scene);
+    (void)tool.process_input(press, camera.camera());
     expect(active, "rotated local X handle is pickable");
     InputFrameSnapshot move{
         .mouse_position = {400.0f, 200.0f},
@@ -373,9 +387,63 @@ void test_translation_uses_oriented_frame() {
         .left_mouse = true,
         .modifiers = {.ctrl = true}
     };
-    tool.process_input(move, camera, scene);
+    (void)tool.process_input(move, camera.camera());
     expect(preview && preview->x == 0.0 && preview->y == 0.5 && preview->z == 0.0,
         "local X drag follows oriented axis and snaps in local coordinates");
+}
+
+void test_gizmo_draw_data() {
+    const TransformFrame frame{.pivot = {1.0, 2.0, 3.0}};
+    std::optional<TranslationConstraint> active = TranslationConstraint::x;
+    TranslationGizmo translation(
+        [&active] { return active; },
+        [frame] { return std::optional{frame}; },
+        [](TranslationConstraint) { return true; },
+        [](cad::Vector3) { return true; },
+        [] {},
+        [] {}
+    );
+    GizmoDrawList draw_list;
+    translation.append_draw_data(draw_list, test_camera(), 600);
+    expect(draw_list.size() == 7, "translation gizmo emits center, arrows, and planes");
+    expect(std::holds_alternative<GizmoCenterHandle>(draw_list[0]),
+        "translation draw list begins with a center handle");
+    expect(std::holds_alternative<GizmoArrow>(draw_list[1]),
+        "translation draw list contains backend-neutral arrows");
+    expect(std::holds_alternative<GizmoPlaneHandle>(draw_list[4]),
+        "translation draw list contains backend-neutral plane handles");
+    if (const auto* arrow = std::get_if<GizmoArrow>(&draw_list[1])) {
+        expect(arrow->color.red == 253 && arrow->color.green == 249,
+            "active constraint is highlighted in draw data");
+    }
+
+    RotationGizmo rotation(
+        [] { return std::optional<RotationConstraint>{}; },
+        [frame] { return std::optional{frame}; },
+        [](RotationConstraint, cad::Vector3) { return true; },
+        [](double) { return true; },
+        [] {},
+        [] {}
+    );
+    draw_list.clear();
+    rotation.append_draw_data(draw_list, test_camera(), 600);
+    expect(draw_list.size() == 4 &&
+           std::ranges::all_of(draw_list, [](const GizmoPrimitive& primitive) {
+               return std::holds_alternative<GizmoRing>(primitive);
+           }), "rotation gizmo emits three axis rings and a camera ring");
+
+    ScaleGizmo scale(
+        [] { return std::optional<ScaleConstraint>{}; },
+        [frame] { return std::optional{frame}; },
+        [](ScaleConstraint) { return true; },
+        [](double) { return true; },
+        [] {},
+        [] {}
+    );
+    draw_list.clear();
+    scale.append_draw_data(draw_list, test_camera(), 600);
+    expect(draw_list.size() == 7 && std::holds_alternative<GizmoCenterHandle>(draw_list[0]),
+        "scale gizmo emits center, stems, and box endpoints");
 }
 
 } // namespace
@@ -388,6 +456,7 @@ int main() {
     test_translation_gizmo_screen_drag_and_cancel();
     test_rotation_and_scale_gizmo_controls();
     test_translation_uses_oriented_frame();
+    test_gizmo_draw_data();
 
     if (failures != 0) {
         std::cerr << failures << " surface picking test(s) failed\n";

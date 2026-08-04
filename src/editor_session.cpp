@@ -84,34 +84,6 @@ bool apply_field_values(
     return true;
 }
 
-bool apply_control_points(
-    Scene& scene,
-    const std::vector<ControlPointSelection>& selections,
-    const std::vector<ControlPoint>& points
-) {
-    if (selections.size() != points.size()) {
-        return false;
-    }
-    std::vector<ControlPoint> originals;
-    originals.reserve(selections.size());
-    for (const ControlPointSelection selection : selections) {
-        const ControlPoint* point = scene.resolve(selection);
-        if (point == nullptr) {
-            return false;
-        }
-        originals.push_back(*point);
-    }
-    for (std::size_t index = 0; index < selections.size(); ++index) {
-        if (!scene.set_control_point(selections[index], points[index]).has_value()) {
-            for (std::size_t rollback = 0; rollback < index; ++rollback) {
-                (void)scene.set_control_point(selections[rollback], originals[rollback]);
-            }
-            return false;
-        }
-    }
-    return true;
-}
-
 class AppliedValuesCommand final : public ICommand {
 public:
     AppliedValuesCommand(
@@ -134,33 +106,6 @@ private:
     std::move_only_function<bool(const std::vector<double>&)> m_set_values;
     std::vector<double> m_initial_values;
     std::vector<double> m_final_values;
-};
-
-class AppliedControlPointsCommand final : public ICommand {
-public:
-    AppliedControlPointsCommand(
-        std::string description,
-        Scene& scene,
-        std::vector<ControlPointSelection> selections,
-        std::vector<ControlPoint> initial_points,
-        std::vector<ControlPoint> final_points
-    )
-        : m_description(std::move(description)),
-          m_scene(scene),
-          m_selections(std::move(selections)),
-          m_initial_points(std::move(initial_points)),
-          m_final_points(std::move(final_points)) {}
-
-    [[nodiscard]] std::string_view description() const override { return m_description; }
-    bool undo() override { return apply_control_points(m_scene, m_selections, m_initial_points); }
-    bool redo() override { return apply_control_points(m_scene, m_selections, m_final_points); }
-
-private:
-    std::string m_description;
-    Scene& m_scene;
-    std::vector<ControlPointSelection> m_selections;
-    std::vector<ControlPoint> m_initial_points;
-    std::vector<ControlPoint> m_final_points;
 };
 
 class CreatedEntityCommand final : public ICommand {
@@ -296,25 +241,6 @@ EditorSession::SelectionOperation selection_operation(ModifierKeys modifiers) {
         EditorSession::SelectionOperation::replace;
 }
 
-std::optional<std::array<cad::Vector3, 3>> orthonormal_frame(
-    cad::Vector3 first,
-    cad::Vector3 second
-) {
-    const auto x = cad::normalized(first);
-    if (!x) {
-        return std::nullopt;
-    }
-    const auto y = cad::normalized(second - *x * cad::dot(second, *x));
-    if (!y) {
-        return std::nullopt;
-    }
-    const auto z = cad::normalized(cad::cross(*x, *y));
-    if (!z) {
-        return std::nullopt;
-    }
-    return std::array{*x, *y, *z};
-}
-
 } // namespace
 
 EditorSession::NotificationBatch::NotificationBatch(EditorSession& session)
@@ -328,7 +254,8 @@ EditorSession::NotificationBatch::~NotificationBatch() {
 }
 
 EditorSession::EditorSession()
-    : m_camera_controller(
+    : m_transform(m_scene, m_selection, m_history),
+      m_camera_controller(
           cad::Point3{10.0, 10.0, 10.0},
           cad::Point3{0.0, 0.0, 0.0}
       ) {
@@ -347,44 +274,6 @@ EditorSession::EditorSession()
     }
 
     m_input_dispatcher.register_tools<CameraNavigationTool>();
-    m_input_dispatcher.register_tools<TranslationTool>(
-        [this] { return translation_active(); },
-        [this] {
-            return m_transform_mode == TransformMode::translate
-                ? transform_frame()
-                : std::nullopt;
-        },
-        [this](TranslationConstraint constraint) { return begin_translation(constraint); },
-        [this](cad::Vector3 delta) { return preview_translation(delta); },
-        [this] { (void)finish_translation(); },
-        [this] { (void)cancel_translation(); }
-    );
-    m_input_dispatcher.register_tools<RotationTool>(
-        [this] { return rotation_active(); },
-        [this] {
-            return m_transform_mode == TransformMode::rotate
-                ? transform_frame()
-                : std::nullopt;
-        },
-        [this](RotationConstraint constraint, cad::Vector3 axis) {
-            return begin_rotation(constraint, axis);
-        },
-        [this](double angle) { return preview_rotation(angle); },
-        [this] { (void)finish_rotation(); },
-        [this] { (void)cancel_rotation(); }
-    );
-    m_input_dispatcher.register_tools<ScaleTool>(
-        [this] { return scale_active(); },
-        [this] {
-            return m_transform_mode == TransformMode::scale
-                ? transform_frame()
-                : std::nullopt;
-        },
-        [this](ScaleConstraint constraint) { return begin_scale(constraint); },
-        [this](double factor) { return preview_scale(factor); },
-        [this] { (void)finish_scale(); },
-        [this] { (void)cancel_scale(); }
-    );
     m_input_dispatcher.register_tools<SurfaceSelectionTool>(
         [this] {
             return m_selection_mode == SelectionMode::object && !transform_active();
@@ -574,497 +463,131 @@ bool EditorSession::shrink_control_point_selection() {
     return select_control_points(std::move(shrunk));
 }
 
-std::vector<ControlPointSelection> EditorSession::translation_targets() const {
-    if (m_selection_mode == SelectionMode::control_point) {
-        const std::span selected = m_selection.control_points();
-        return {selected.begin(), selected.end()};
-    }
-    const EntitySelection* entity = m_selection.entity();
-    const SceneNode* node = entity == nullptr ? nullptr : m_scene.find_entity(entity->entity);
-    if (node == nullptr || node->surface == nullptr) {
-        return {};
-    }
-    std::vector<ControlPointSelection> targets;
-    targets.reserve(node->surface->u_count() * node->surface->v_count());
-    for (std::size_t u = 0; u < node->surface->u_count(); ++u) {
-        for (std::size_t v = 0; v < node->surface->v_count(); ++v) {
-            targets.push_back({entity->entity, u, v});
-        }
-    }
-    return targets;
-}
-
 std::optional<cad::Point3> EditorSession::selection_pivot() const {
-    const std::vector<ControlPointSelection> targets = translation_targets();
-    if (targets.empty()) {
-        return std::nullopt;
-    }
-    if (m_pivot_mode == PivotMode::world_origin) {
-        return cad::Point3{};
-    }
-    if (m_pivot_mode == PivotMode::primary_control_point) {
-        const ControlPointSelection* primary = m_selection.control_point();
-        const ControlPoint* point = primary == nullptr ? nullptr : m_scene.resolve(*primary);
-        if (point != nullptr) {
-            return point->position;
-        }
-    }
-    long double x = 0.0L;
-    long double y = 0.0L;
-    long double z = 0.0L;
-    for (const ControlPointSelection target : targets) {
-        const ControlPoint* point = m_scene.resolve(target);
-        if (point == nullptr) {
-            return std::nullopt;
-        }
-        x += point->position.x;
-        y += point->position.y;
-        z += point->position.z;
-    }
-    const long double count = static_cast<long double>(targets.size());
-    const cad::Point3 pivot{
-        static_cast<double>(x / count),
-        static_cast<double>(y / count),
-        static_cast<double>(z / count)
-    };
-    return cad::is_finite(pivot) ? std::optional{pivot} : std::nullopt;
-}
-
-std::optional<TransformFrame> EditorSession::transform_frame() const {
-    const auto pivot = selection_pivot();
-    if (!pivot) {
-        return std::nullopt;
-    }
-    TransformFrame frame{.pivot = *pivot};
-    if (m_transform_orientation == TransformOrientation::world) {
-        return frame;
-    }
-
-    std::optional<std::array<cad::Vector3, 3>> axes;
-    if (const ControlPointSelection* primary = m_selection.control_point()) {
-        const SceneNode* node = m_scene.find_entity(primary->entity);
-        if (node != nullptr && node->surface != nullptr) {
-            const auto net = node->surface->control_net_2d();
-            const auto tangent = [&net](std::size_t u, std::size_t v, bool along_u) {
-                const std::size_t index = along_u ? u : v;
-                const std::size_t count = along_u ? net.extent(0) : net.extent(1);
-                const auto point = [&net, along_u](std::size_t varying, std::size_t fixed) {
-                    return along_u ? net[varying, fixed].position : net[fixed, varying].position;
-                };
-                if (index > 0 && index + 1 < count) {
-                    return point(index + 1, along_u ? v : u) -
-                        point(index - 1, along_u ? v : u);
-                }
-                if (index + 1 < count) {
-                    return point(index + 1, along_u ? v : u) - point(index, along_u ? v : u);
-                }
-                if (index > 0) {
-                    return point(index, along_u ? v : u) - point(index - 1, along_u ? v : u);
-                }
-                return cad::Vector3{};
-            };
-            axes = orthonormal_frame(
-                tangent(primary->u, primary->v, true),
-                tangent(primary->u, primary->v, false)
-            );
-        }
-    } else if (const EntitySelection* entity = m_selection.entity()) {
-        const SceneNode* node = m_scene.find_entity(entity->entity);
-        if (node != nullptr && node->surface != nullptr) {
-            const auto u_domain = node->surface->u_domain();
-            const auto v_domain = node->surface->v_domain();
-            if (u_domain && v_domain) {
-                const auto derivatives = node->surface->evaluate_derivatives(
-                    std::midpoint(u_domain->first, u_domain->second),
-                    std::midpoint(v_domain->first, v_domain->second)
-                );
-                if (derivatives) {
-                    axes = orthonormal_frame(derivatives->u, derivatives->v);
-                }
-            }
-        }
-    }
-    if (axes) {
-        frame.x = (*axes)[0];
-        frame.y = (*axes)[1];
-        frame.z = (*axes)[2];
-    }
-    return frame;
+    return m_transform.pivot();
 }
 
 bool EditorSession::begin_translation(TranslationConstraint constraint) {
-    NotificationBatch notifications(*this);
     (void)cancel_pending_edit();
-    (void)cancel_translation();
-    (void)cancel_rotation();
-    (void)cancel_scale();
-    std::vector<ControlPointSelection> targets = translation_targets();
-    if (targets.empty()) {
-        return false;
-    }
-    std::vector<ControlPoint> initial_points;
-    initial_points.reserve(targets.size());
-    for (const ControlPointSelection target : targets) {
-        const ControlPoint* point = m_scene.resolve(target);
-        if (point == nullptr) {
-            return false;
-        }
-        initial_points.push_back(*point);
-    }
-    m_pending_translation = PendingTranslation{
-        std::move(targets),
-        std::move(initial_points),
-        constraint,
-        {}
-    };
-    notify(EditorChange{.history = true});
-    return true;
+    const bool started = m_transform.begin_translation(constraint);
+    if (started) notify(EditorChange{.history = true});
+    return started;
 }
 
 bool EditorSession::preview_translation(cad::Vector3 delta) {
-    NotificationBatch notifications(*this);
-    if (!m_pending_translation.has_value() || !cad::is_finite(delta)) {
-        return false;
-    }
-    std::vector<ControlPoint> translated = m_pending_translation->initial_points;
-    for (ControlPoint& point : translated) {
-        point.position = point.position + delta;
-    }
-    if (!apply_control_points(m_scene, m_pending_translation->selections, translated)) {
-        return false;
-    }
-    m_pending_translation->delta = delta;
-    notify(EditorChange{.geometry = true, .properties = true, .history = true});
-    return true;
+    const bool changed = m_transform.preview_translation(delta);
+    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return changed;
 }
 
 bool EditorSession::finish_translation() {
-    NotificationBatch notifications(*this);
-    if (!m_pending_translation.has_value()) {
-        return false;
-    }
-    PendingTranslation translation = std::move(*m_pending_translation);
-    m_pending_translation.reset();
-    if (translation.delta == cad::Vector3{}) {
-        notify(EditorChange{.history = true});
-        return false;
-    }
-    std::vector<ControlPoint> final_points;
-    final_points.reserve(translation.selections.size());
-    for (const ControlPointSelection selection : translation.selections) {
-        const ControlPoint* point = m_scene.resolve(selection);
-        if (point == nullptr) {
-            (void)apply_control_points(m_scene, translation.selections, translation.initial_points);
-            notify(EditorChange{.geometry = true, .properties = true, .history = true});
-            return false;
-        }
-        final_points.push_back(*point);
-    }
-    m_history.record_applied(std::make_unique<AppliedControlPointsCommand>(
-        "Translate Selection",
-        m_scene,
-        std::move(translation.selections),
-        std::move(translation.initial_points),
-        std::move(final_points)
-    ));
+    const bool committed = m_transform.finish_translation();
     notify(EditorChange{.history = true});
-    return true;
+    return committed;
 }
 
 bool EditorSession::cancel_translation() {
-    if (!m_pending_translation.has_value()) {
-        return false;
+    const bool was_active = m_transform.translation_active();
+    const bool restored = m_transform.cancel_translation();
+    if (was_active) {
+        notify(EditorChange{.geometry = true, .properties = true, .history = true});
     }
-    PendingTranslation translation = std::move(*m_pending_translation);
-    m_pending_translation.reset();
-    const bool restored = apply_control_points(
-        m_scene,
-        translation.selections,
-        translation.initial_points
-    );
-    notify(EditorChange{
-        .geometry = restored,
-        .properties = restored,
-        .history = true
-    });
     return restored;
 }
 
 bool EditorSession::translate_selection(cad::Vector3 delta) {
-    if (!begin_translation(TranslationConstraint::screen)) {
-        return false;
-    }
-    if (!preview_translation(delta)) {
-        (void)cancel_translation();
-        return false;
-    }
-    return finish_translation();
+    const bool changed = m_transform.translate(delta);
+    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return changed;
 }
 
 bool EditorSession::begin_rotation(RotationConstraint constraint, cad::Vector3 axis) {
-    NotificationBatch notifications(*this);
     (void)cancel_pending_edit();
-    (void)cancel_active_transform();
-    (void)cancel_rotation();
-    (void)cancel_scale();
-    const auto unit_axis = cad::normalized(axis);
-    const auto pivot = selection_pivot();
-    std::vector<ControlPointSelection> targets = translation_targets();
-    if (!unit_axis || !pivot || targets.empty()) {
-        return false;
-    }
-    std::vector<ControlPoint> initial_points;
-    initial_points.reserve(targets.size());
-    for (const ControlPointSelection target : targets) {
-        const ControlPoint* point = m_scene.resolve(target);
-        if (point == nullptr) {
-            return false;
-        }
-        initial_points.push_back(*point);
-    }
-    m_pending_rotation = PendingRotation{
-        std::move(targets),
-        std::move(initial_points),
-        constraint,
-        *unit_axis,
-        *pivot,
-        0.0
-    };
-    notify(EditorChange{.history = true});
-    return true;
+    const bool started = m_transform.begin_rotation(constraint, axis);
+    if (started) notify(EditorChange{.history = true});
+    return started;
 }
 
-bool EditorSession::preview_rotation(double angle_radians) {
-    NotificationBatch notifications(*this);
-    if (!m_pending_rotation || !std::isfinite(angle_radians)) {
-        return false;
-    }
-    const cad::Vector3 axis = m_pending_rotation->axis;
-    const double cosine = std::cos(angle_radians);
-    const double sine = std::sin(angle_radians);
-    std::vector<ControlPoint> rotated = m_pending_rotation->initial_points;
-    for (ControlPoint& point : rotated) {
-        const cad::Vector3 offset = point.position - m_pending_rotation->pivot;
-        const cad::Vector3 transformed = offset * cosine + cad::cross(axis, offset) * sine +
-            axis * (cad::dot(axis, offset) * (1.0 - cosine));
-        point.position = m_pending_rotation->pivot + transformed;
-    }
-    if (!apply_control_points(m_scene, m_pending_rotation->selections, rotated)) {
-        return false;
-    }
-    m_pending_rotation->angle_radians = angle_radians;
-    notify(EditorChange{.geometry = true, .properties = true, .history = true});
-    return true;
+bool EditorSession::preview_rotation(double angle) {
+    const bool changed = m_transform.preview_rotation(angle);
+    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return changed;
 }
 
 bool EditorSession::finish_rotation() {
-    NotificationBatch notifications(*this);
-    if (!m_pending_rotation) {
-        return false;
-    }
-    PendingRotation rotation = std::move(*m_pending_rotation);
-    m_pending_rotation.reset();
-    if (rotation.angle_radians == 0.0) {
-        notify(EditorChange{.history = true});
-        return false;
-    }
-    std::vector<ControlPoint> final_points;
-    for (const ControlPointSelection selection : rotation.selections) {
-        const ControlPoint* point = m_scene.resolve(selection);
-        if (point == nullptr) {
-            (void)apply_control_points(m_scene, rotation.selections, rotation.initial_points);
-            return false;
-        }
-        final_points.push_back(*point);
-    }
-    m_history.record_applied(std::make_unique<AppliedControlPointsCommand>(
-        "Rotate Selection",
-        m_scene,
-        std::move(rotation.selections),
-        std::move(rotation.initial_points),
-        std::move(final_points)
-    ));
+    const bool committed = m_transform.finish_rotation();
     notify(EditorChange{.history = true});
-    return true;
+    return committed;
 }
 
 bool EditorSession::cancel_rotation() {
-    if (!m_pending_rotation) {
-        return false;
-    }
-    PendingRotation rotation = std::move(*m_pending_rotation);
-    m_pending_rotation.reset();
-    const bool restored = apply_control_points(m_scene, rotation.selections, rotation.initial_points);
-    notify(EditorChange{.geometry = restored, .properties = restored, .history = true});
+    const bool was_active = m_transform.rotation_active();
+    const bool restored = m_transform.cancel_rotation();
+    if (was_active) notify(EditorChange{.geometry = true, .properties = true, .history = true});
     return restored;
 }
 
-bool EditorSession::rotate_selection(cad::Vector3 axis, double angle_radians) {
-    if (!begin_rotation(RotationConstraint::screen, axis)) {
-        return false;
-    }
-    if (!preview_rotation(angle_radians)) {
-        (void)cancel_rotation();
-        return false;
-    }
-    return finish_rotation();
+bool EditorSession::rotate_selection(cad::Vector3 axis, double angle) {
+    const bool changed = m_transform.rotate(axis, angle);
+    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return changed;
 }
 
 bool EditorSession::begin_scale(ScaleConstraint constraint) {
-    NotificationBatch notifications(*this);
     (void)cancel_pending_edit();
-    (void)cancel_translation();
-    (void)cancel_rotation();
-    (void)cancel_scale();
-    const auto frame = transform_frame();
-    std::vector<ControlPointSelection> targets = translation_targets();
-    if (!frame || targets.empty()) {
-        return false;
-    }
-    std::vector<ControlPoint> initial_points;
-    initial_points.reserve(targets.size());
-    for (const ControlPointSelection target : targets) {
-        const ControlPoint* point = m_scene.resolve(target);
-        if (point == nullptr) {
-            return false;
-        }
-        initial_points.push_back(*point);
-    }
-    m_pending_scale = PendingScale{
-        std::move(targets),
-        std::move(initial_points),
-        constraint,
-        constraint == ScaleConstraint::x ? frame->x :
-            (constraint == ScaleConstraint::y ? frame->y : frame->z),
-        frame->pivot,
-        1.0
-    };
-    notify(EditorChange{.history = true});
-    return true;
+    const bool started = m_transform.begin_scale(constraint);
+    if (started) notify(EditorChange{.history = true});
+    return started;
 }
 
 bool EditorSession::preview_scale(double factor) {
-    NotificationBatch notifications(*this);
-    if (!m_pending_scale || !std::isfinite(factor) || factor <= 0.0) {
-        return false;
-    }
-    std::vector<ControlPoint> scaled = m_pending_scale->initial_points;
-    for (ControlPoint& point : scaled) {
-        cad::Vector3 offset = point.position - m_pending_scale->pivot;
-        if (m_pending_scale->constraint == ScaleConstraint::uniform) {
-            offset = offset * factor;
-        } else {
-            offset = offset + m_pending_scale->axis *
-                (cad::dot(offset, m_pending_scale->axis) * (factor - 1.0));
-        }
-        point.position = m_pending_scale->pivot + offset;
-    }
-    if (!apply_control_points(m_scene, m_pending_scale->selections, scaled)) {
-        return false;
-    }
-    m_pending_scale->factor = factor;
-    notify(EditorChange{.geometry = true, .properties = true, .history = true});
-    return true;
+    const bool changed = m_transform.preview_scale(factor);
+    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return changed;
 }
 
 bool EditorSession::finish_scale() {
-    NotificationBatch notifications(*this);
-    if (!m_pending_scale) {
-        return false;
-    }
-    PendingScale scale = std::move(*m_pending_scale);
-    m_pending_scale.reset();
-    if (scale.factor == 1.0) {
-        notify(EditorChange{.history = true});
-        return false;
-    }
-    std::vector<ControlPoint> final_points;
-    for (const ControlPointSelection selection : scale.selections) {
-        const ControlPoint* point = m_scene.resolve(selection);
-        if (point == nullptr) {
-            (void)apply_control_points(m_scene, scale.selections, scale.initial_points);
-            return false;
-        }
-        final_points.push_back(*point);
-    }
-    m_history.record_applied(std::make_unique<AppliedControlPointsCommand>(
-        "Scale Selection",
-        m_scene,
-        std::move(scale.selections),
-        std::move(scale.initial_points),
-        std::move(final_points)
-    ));
+    const bool committed = m_transform.finish_scale();
     notify(EditorChange{.history = true});
-    return true;
+    return committed;
 }
 
 bool EditorSession::cancel_scale() {
-    if (!m_pending_scale) {
-        return false;
-    }
-    PendingScale scale = std::move(*m_pending_scale);
-    m_pending_scale.reset();
-    const bool restored = apply_control_points(m_scene, scale.selections, scale.initial_points);
-    notify(EditorChange{.geometry = restored, .properties = restored, .history = true});
+    const bool was_active = m_transform.scale_active();
+    const bool restored = m_transform.cancel_scale();
+    if (was_active) notify(EditorChange{.geometry = true, .properties = true, .history = true});
     return restored;
 }
 
 bool EditorSession::scale_selection(ScaleConstraint constraint, double factor) {
-    if (!begin_scale(constraint)) {
-        return false;
-    }
-    if (!preview_scale(factor)) {
-        (void)cancel_scale();
-        return false;
-    }
-    return finish_scale();
+    const bool changed = m_transform.scale(constraint, factor);
+    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return changed;
 }
 
 bool EditorSession::set_transform_mode(TransformMode mode) {
-    if (m_transform_mode == mode) {
-        return false;
-    }
-    (void)cancel_translation();
-    (void)cancel_rotation();
-    (void)cancel_scale();
-    m_transform_mode = mode;
-    notify(EditorChange{.interaction_mode = true});
-    return true;
-}
-
-bool EditorSession::cancel_active_transform() {
-    if (translation_active()) {
-        return cancel_translation();
-    }
-    if (rotation_active()) {
-        return cancel_rotation();
-    }
-    if (scale_active()) {
-        return cancel_scale();
-    }
-    return false;
+    const bool changed = m_transform.set_mode(mode);
+    if (changed) notify(EditorChange{.geometry = true, .interaction_mode = true});
+    return changed;
 }
 
 bool EditorSession::set_pivot_mode(PivotMode mode) {
-    if (m_pivot_mode == mode) {
-        return false;
-    }
-    (void)cancel_active_transform();
-    (void)cancel_rotation();
-    (void)cancel_scale();
-    m_pivot_mode = mode;
-    notify(EditorChange{.geometry = true, .interaction_mode = true});
-    return true;
+    const bool changed = m_transform.set_pivot_mode(mode);
+    if (changed) notify(EditorChange{.geometry = true, .interaction_mode = true});
+    return changed;
 }
 
 bool EditorSession::set_transform_orientation(TransformOrientation orientation) {
-    if (m_transform_orientation == orientation) {
-        return false;
-    }
-    (void)cancel_active_transform();
-    m_transform_orientation = orientation;
-    notify(EditorChange{.geometry = true, .interaction_mode = true});
-    return true;
+    const bool changed = m_transform.set_orientation(orientation);
+    if (changed) notify(EditorChange{.geometry = true, .interaction_mode = true});
+    return changed;
+}
+
+bool EditorSession::cancel_active_transform() {
+    const bool was_active = m_transform.active();
+    const bool restored = m_transform.cancel();
+    if (was_active) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    return restored;
 }
 
 bool EditorSession::clear_selection() {
@@ -1129,7 +652,7 @@ bool EditorSession::undo() {
 
 bool EditorSession::redo() {
     NotificationBatch notifications(*this);
-    if (m_pending_edit.has_value() || transform_active()) {
+    if (m_pending_edit.has_value() || m_transform.active()) {
         return false;
     }
     if (!m_history.redo()) {
@@ -1146,11 +669,7 @@ bool EditorSession::redo() {
 }
 
 bool EditorSession::can_undo() const {
-    return (m_pending_translation.has_value() &&
-            m_pending_translation->delta != cad::Vector3{}) ||
-        (m_pending_rotation.has_value() && m_pending_rotation->angle_radians != 0.0) ||
-        (m_pending_scale.has_value() && m_pending_scale->factor != 1.0) ||
-        pending_edit_has_preview() || m_history.can_undo();
+    return m_transform.has_preview() || pending_edit_has_preview() || m_history.can_undo();
 }
 
 bool EditorSession::can_redo() const {
@@ -1159,15 +678,8 @@ bool EditorSession::can_redo() const {
 }
 
 std::string EditorSession::undo_description() const {
-    if (m_pending_translation.has_value() &&
-        m_pending_translation->delta != cad::Vector3{}) {
-        return "Translate Selection";
-    }
-    if (m_pending_rotation && m_pending_rotation->angle_radians != 0.0) {
-        return "Rotate Selection";
-    }
-    if (m_pending_scale && m_pending_scale->factor != 1.0) {
-        return "Scale Selection";
+    if (m_transform.has_preview()) {
+        return std::string(m_transform.active_description());
     }
     if (pending_edit_has_preview()) {
         return std::string(field_description(m_pending_edit->field));
@@ -1180,15 +692,11 @@ std::string EditorSession::redo_description() const {
 }
 
 bool EditorSession::is_dirty() const {
-    return (m_pending_translation.has_value() &&
-            m_pending_translation->delta != cad::Vector3{}) ||
-        (m_pending_rotation.has_value() && m_pending_rotation->angle_radians != 0.0) ||
-        (m_pending_scale.has_value() && m_pending_scale->factor != 1.0) ||
-        pending_edit_has_preview() || m_history.is_dirty();
+    return m_transform.has_preview() || pending_edit_has_preview() || m_history.is_dirty();
 }
 
 void EditorSession::mark_saved() {
-    if (!m_pending_edit.has_value()) {
+    if (!m_pending_edit.has_value() && !m_transform.active()) {
         m_history.mark_saved();
         notify(EditorChange{.history = true});
     }
@@ -1198,23 +706,16 @@ void EditorSession::commit_pending_edit() {
     if (m_pending_edit.has_value()) {
         finish_control_point_edit(m_pending_edit->field);
     }
-    if (m_pending_translation.has_value()) {
-        (void)finish_translation();
-    }
-    if (m_pending_rotation.has_value()) {
-        (void)finish_rotation();
-    }
-    if (m_pending_scale.has_value()) {
-        (void)finish_scale();
+    if (m_transform.active()) {
+        (void)m_transform.commit();
+        notify(EditorChange{.history = true});
     }
 }
 
 void EditorSession::replace_document(Scene scene) {
     NotificationBatch notifications(*this);
     m_pending_edit.reset();
-    m_pending_translation.reset();
-    m_pending_rotation.reset();
-    m_pending_scale.reset();
+    m_transform.reset();
     m_selection.clear();
     m_hovered_entity.reset();
     m_history.clear();

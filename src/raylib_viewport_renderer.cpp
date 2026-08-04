@@ -12,9 +12,10 @@
 #include <cstdint>
 #include <numbers>
 #include <span>
-#include <tuple>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -72,71 +73,6 @@ void draw_control_net(
     }
 }
 
-void draw_translation_gizmo(
-    const TransformFrame& frame,
-    const CameraState& camera,
-    std::optional<TranslationConstraint> active_constraint,
-    int framebuffer_height
-) {
-    const cad::Point3 pivot = frame.pivot;
-    if (framebuffer_height <= 0) {
-        return;
-    }
-    const double scale = cad::distance(camera.position, pivot) * 2.0 * std::tan(
-        static_cast<double>(camera.vertical_fov_degrees) * std::numbers::pi / 360.0
-    ) * 80.0 / static_cast<double>(framebuffer_height);
-    if (!std::isfinite(scale) || scale <= 0.0) {
-        return;
-    }
-    const Vector3 center = to_raylib(pivot);
-    const auto endpoint = [pivot, scale](cad::Vector3 axis, double length = 1.0) {
-        return to_raylib(pivot + axis * (scale * length));
-    };
-    const Color active_color = YELLOW;
-    DrawSphere(
-        center,
-        static_cast<float>(scale * 0.08),
-        active_constraint == TranslationConstraint::screen ? active_color : LIGHTGRAY
-    );
-    for (const auto& [constraint, axis, color] : {
-             std::tuple{TranslationConstraint::x, frame.x, RED},
-             std::tuple{TranslationConstraint::y, frame.y, GREEN},
-             std::tuple{TranslationConstraint::z, frame.z, BLUE}
-         }) {
-        const Color handle_color = active_constraint == constraint ? active_color : color;
-        DrawCylinderEx(
-            center,
-            endpoint(axis, 0.78),
-            static_cast<float>(scale * 0.025),
-            static_cast<float>(scale * 0.025),
-            8,
-            handle_color
-        );
-        DrawCylinderEx(
-            endpoint(axis, 0.72),
-            endpoint(axis),
-            static_cast<float>(scale * 0.09),
-            0.0f,
-            12,
-            handle_color
-        );
-    }
-    for (const auto& [constraint, first, second, color] : {
-             std::tuple{TranslationConstraint::xy, frame.x, frame.y, Fade(YELLOW, 0.65f)},
-             std::tuple{TranslationConstraint::xz, frame.x, frame.z, Fade(MAGENTA, 0.65f)},
-             std::tuple{TranslationConstraint::yz, frame.y, frame.z, Fade(SKYBLUE, 0.65f)}
-         }) {
-        const Color handle_color = active_constraint == constraint
-            ? active_color
-            : color;
-        const Vector3 a = endpoint(first * 0.18, 1.0);
-        const Vector3 b = endpoint((first + second) * 0.38, 1.0);
-        const Vector3 c = endpoint(second * 0.18, 1.0);
-        DrawTriangle3D(a, b, c, handle_color);
-        DrawTriangle3D(c, b, a, handle_color);
-    }
-}
-
 std::pair<cad::Vector3, cad::Vector3> ring_basis(cad::Vector3 normal) {
     const cad::Vector3 reference = std::abs(normal.y) < 0.9
         ? cad::Vector3{0.0, 1.0, 0.0}
@@ -160,78 +96,58 @@ void draw_ring(cad::Point3 pivot, cad::Vector3 normal, double radius, Color colo
     }
 }
 
-double gizmo_scale(cad::Point3 pivot, const CameraState& camera, int framebuffer_height) {
-    return cad::distance(camera.position, pivot) * 2.0 * std::tan(
-        static_cast<double>(camera.vertical_fov_degrees) * std::numbers::pi / 360.0
-    ) * 80.0 / static_cast<double>(framebuffer_height);
+Color to_raylib(GizmoColor color) {
+    return {color.red, color.green, color.blue, color.alpha};
 }
 
-void draw_rotation_gizmo(
-    const TransformFrame& frame,
-    const CameraState& camera,
-    std::optional<RotationConstraint> active_constraint,
-    int framebuffer_height
-) {
-    const cad::Point3 pivot = frame.pivot;
-    const double scale = gizmo_scale(pivot, camera, framebuffer_height);
-    const auto screen_axis = cad::normalized(camera.target - camera.position);
-    if (!screen_axis || !std::isfinite(scale) || scale <= 0.0) {
-        return;
-    }
-    const Color active = YELLOW;
-    draw_ring(pivot, frame.x, scale,
-        active_constraint == RotationConstraint::x ? active : RED);
-    draw_ring(pivot, frame.y, scale,
-        active_constraint == RotationConstraint::y ? active : GREEN);
-    draw_ring(pivot, frame.z, scale,
-        active_constraint == RotationConstraint::z ? active : BLUE);
-    draw_ring(pivot, *screen_axis, scale * 1.18,
-        active_constraint == RotationConstraint::screen ? active : LIGHTGRAY);
-}
-
-void draw_scale_gizmo(
-    const TransformFrame& frame,
-    const CameraState& camera,
-    std::optional<ScaleConstraint> active_constraint,
-    int framebuffer_height
-) {
-    const cad::Point3 pivot = frame.pivot;
-    const double scale = gizmo_scale(pivot, camera, framebuffer_height);
-    if (!std::isfinite(scale) || scale <= 0.0) {
-        return;
-    }
-    const Color active = YELLOW;
-    const Vector3 center = to_raylib(pivot);
-    DrawCube(
-        center,
-        static_cast<float>(scale * 0.14),
-        static_cast<float>(scale * 0.14),
-        static_cast<float>(scale * 0.14),
-        active_constraint == ScaleConstraint::uniform ? active : LIGHTGRAY
-    );
-    for (const auto& [constraint, axis, color] : {
-             std::tuple{ScaleConstraint::x, frame.x, RED},
-             std::tuple{ScaleConstraint::y, frame.y, GREEN},
-             std::tuple{ScaleConstraint::z, frame.z, BLUE}
-         }) {
-        const Color handle = active_constraint == constraint ? active : color;
-        const Vector3 end = to_raylib(pivot + axis * scale);
-        DrawCylinderEx(
-            center,
-            end,
-            static_cast<float>(scale * 0.025),
-            static_cast<float>(scale * 0.025),
-            8,
-            handle
-        );
-        DrawCube(
-            end,
-            static_cast<float>(scale * 0.13),
-            static_cast<float>(scale * 0.13),
-            static_cast<float>(scale * 0.13),
-            handle
-        );
-    }
+void draw_gizmo(const GizmoPrimitive& primitive) {
+    std::visit([](const auto& item) {
+        using Item = std::decay_t<decltype(item)>;
+        const Color color = to_raylib(item.color);
+        if constexpr (std::is_same_v<Item, GizmoLine>) {
+            if (item.radius > 0.0) {
+                DrawCylinderEx(
+                    to_raylib(item.start), to_raylib(item.end),
+                    static_cast<float>(item.radius), static_cast<float>(item.radius), 8, color
+                );
+            } else {
+                DrawLine3D(to_raylib(item.start), to_raylib(item.end), color);
+            }
+        } else if constexpr (std::is_same_v<Item, GizmoArrow>) {
+            DrawCylinderEx(
+                to_raylib(item.start), to_raylib(item.shaft_end),
+                static_cast<float>(item.shaft_radius),
+                static_cast<float>(item.shaft_radius), 8, color
+            );
+            DrawCylinderEx(
+                to_raylib(item.head_start), to_raylib(item.tip),
+                static_cast<float>(item.head_radius), 0.0f, 12, color
+            );
+        } else if constexpr (std::is_same_v<Item, GizmoBox>) {
+            DrawCube(
+                to_raylib(item.center), static_cast<float>(item.size),
+                static_cast<float>(item.size), static_cast<float>(item.size), color
+            );
+        } else if constexpr (std::is_same_v<Item, GizmoPlaneHandle>) {
+            DrawTriangle3D(
+                to_raylib(item.first), to_raylib(item.second), to_raylib(item.third), color
+            );
+            DrawTriangle3D(
+                to_raylib(item.third), to_raylib(item.second), to_raylib(item.first), color
+            );
+        } else if constexpr (std::is_same_v<Item, GizmoRing>) {
+            draw_ring(item.center, item.normal, item.radius, color);
+        } else if constexpr (std::is_same_v<Item, GizmoCenterHandle>) {
+            if (item.shape == GizmoCenterShape::sphere) {
+                DrawSphere(to_raylib(item.center), static_cast<float>(item.size), color);
+            } else {
+                DrawCube(
+                    to_raylib(item.center), static_cast<float>(item.size),
+                    static_cast<float>(item.size), static_cast<float>(item.size), color
+                );
+            }
+        }
+    }, primitive);
 }
 
 } // namespace
@@ -244,11 +160,7 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
-        std::optional<TransformFrame> transform_frame,
-        TransformMode transform_mode,
-        std::optional<TranslationConstraint> active_translation_constraint,
-        std::optional<RotationConstraint> active_rotation_constraint,
-        std::optional<ScaleConstraint> active_scale_constraint,
+        std::span<const GizmoPrimitive> gizmos,
         int framebuffer_width,
         int framebuffer_height
     ) {
@@ -297,33 +209,8 @@ public:
                 );
             }
         }
-        if (transform_frame) {
-            switch (transform_mode) {
-                case TransformMode::translate:
-                    draw_translation_gizmo(
-                        *transform_frame,
-                        camera,
-                        active_translation_constraint,
-                        framebuffer_height
-                    );
-                    break;
-                case TransformMode::rotate:
-                    draw_rotation_gizmo(
-                        *transform_frame,
-                        camera,
-                        active_rotation_constraint,
-                        framebuffer_height
-                    );
-                    break;
-                case TransformMode::scale:
-                    draw_scale_gizmo(
-                        *transform_frame,
-                        camera,
-                        active_scale_constraint,
-                        framebuffer_height
-                    );
-                    break;
-            }
+        for (const GizmoPrimitive& gizmo : gizmos) {
+            draw_gizmo(gizmo);
         }
         rlDrawRenderBatchActive();
         rlDisableDepthTest();
@@ -413,11 +300,7 @@ void RaylibViewportRenderer::render(
     std::span<const ControlPointSelection> selected_points,
     std::optional<EntityId> selected_entity,
     std::optional<EntityId> hovered_entity,
-    std::optional<TransformFrame> transform_frame,
-    TransformMode transform_mode,
-    std::optional<TranslationConstraint> active_translation_constraint,
-    std::optional<RotationConstraint> active_rotation_constraint,
-    std::optional<ScaleConstraint> active_scale_constraint,
+    std::span<const GizmoPrimitive> gizmos,
     int framebuffer_width,
     int framebuffer_height
 ) {
@@ -427,11 +310,7 @@ void RaylibViewportRenderer::render(
         selected_points,
         selected_entity,
         hovered_entity,
-        transform_frame,
-        transform_mode,
-        active_translation_constraint,
-        active_rotation_constraint,
-        active_scale_constraint,
+        gizmos,
         framebuffer_width,
         framebuffer_height
     );
