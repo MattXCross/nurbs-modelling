@@ -5,6 +5,7 @@
 #include "math_types.h"
 #include "orbit_camera.h"
 #include "scene.h"
+#include "surface_tessellation.h"
 #include "viewport_math.h"
 
 #include <cstddef>
@@ -20,5 +21,5 @@ struct SurfacePickHit {
 [[nodiscard]] std::vector<SurfacePickHit> pick_surfaces(
     const Scene& scene,
     const cad::Ray3& ray,
-    std::size_t segments_per_knot_span = 8
+    const cad::SurfaceTessellationSettings& settings = {}
 );

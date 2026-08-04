@@ -12,8 +12,11 @@
 #include <optional>
 #include <utility>
 #include <vector>
+#include <atomic>
 
 namespace {
+
+std::atomic<std::uint64_t> next_surface_identity{1};
 
 struct LongVector3 {
     long double x{0.0L};
@@ -314,7 +317,8 @@ NurbsSurface::NurbsSurface(
       m_v_degree(v_degree),
       m_control_points(std::move(points)),
       m_u_knots(std::move(u_knots)),
-      m_v_knots(std::move(v_knots)) {}
+      m_v_knots(std::move(v_knots)),
+      m_identity(next_surface_identity.fetch_add(1, std::memory_order_relaxed)) {}
 
 std::expected<bool, NurbsSurfaceError> NurbsSurface::set_control_point(
     size_t u,

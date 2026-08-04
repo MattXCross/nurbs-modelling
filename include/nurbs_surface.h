@@ -9,6 +9,7 @@
 #include <ranges>
 #include <array>
 #include <utility>
+#include <cstdint>
 
 #include "core.h"
 #include "geometry_tolerance.h"
@@ -85,6 +86,7 @@ private:
     std::vector<ControlPoint> m_control_points;
     std::vector<double> m_u_knots;
     std::vector<double> m_v_knots;
+    std::uint64_t m_identity{0};
 
 public:
     [[nodiscard]] static std::expected<std::unique_ptr<NurbsSurface>, NurbsSurfaceError> create(
@@ -155,6 +157,7 @@ public:
     [[nodiscard]] size_t v_count() const { return m_v_count; }
     [[nodiscard]] size_t u_degree() const { return m_u_degree; }
     [[nodiscard]] size_t v_degree() const { return m_v_degree; }
+    [[nodiscard]] std::uint64_t identity() const noexcept { return m_identity; }
     [[nodiscard]] const std::vector<double>& u_knots() const { return m_u_knots; }
     [[nodiscard]] const std::vector<double>& v_knots() const { return m_v_knots; }
     [[nodiscard]] std::optional<std::pair<double, double>> u_domain() const {

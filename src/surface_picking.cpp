@@ -2,7 +2,7 @@
 
 #include "geometry_queries.h"
 #include "geometry_tolerance.h"
-#include "surface_sampling.h"
+#include "surface_tessellation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -53,28 +53,23 @@ std::optional<double> intersect_triangle(
     return distance;
 }
 
-std::optional<double> intersect_sample_grid(
+std::optional<double> intersect_mesh(
     const cad::Ray3& ray,
-    const NurbsSurfaceSampleGrid& samples
+    const cad::SurfaceMesh& mesh
 ) noexcept {
     std::optional<double> closest;
-    for (std::size_t u = 0; u + 1 < samples.u_count(); ++u) {
-        for (std::size_t v = 0; v + 1 < samples.v_count(); ++v) {
-            const auto p00 = samples.point(u, v);
-            const auto p10 = samples.point(u + 1, v);
-            const auto p01 = samples.point(u, v + 1);
-            const auto p11 = samples.point(u + 1, v + 1);
-            if (!p00 || !p10 || !p01 || !p11) {
-                continue;
-            }
-            for (const auto hit : {
-                     intersect_triangle(ray, *p00, *p10, *p11),
-                     intersect_triangle(ray, *p00, *p11, *p01)
-                 }) {
-                if (hit && (!closest || *hit < *closest)) {
-                    closest = *hit;
-                }
-            }
+    for (std::size_t index = 0; index + 2 < mesh.triangle_indices.size(); index += 3) {
+        const std::uint32_t a = mesh.triangle_indices[index];
+        const std::uint32_t b = mesh.triangle_indices[index + 1];
+        const std::uint32_t c = mesh.triangle_indices[index + 2];
+        if (a >= mesh.positions.size() || b >= mesh.positions.size() || c >= mesh.positions.size()) {
+            continue;
+        }
+        const auto hit = intersect_triangle(
+            ray, mesh.positions[a], mesh.positions[b], mesh.positions[c]
+        );
+        if (hit && (!closest || *hit < *closest)) {
+            closest = *hit;
         }
     }
     return closest;
@@ -85,12 +80,10 @@ std::optional<double> intersect_sample_grid(
 std::vector<SurfacePickHit> pick_surfaces(
     const Scene& scene,
     const cad::Ray3& ray,
-    std::size_t segments_per_knot_span
+    const cad::SurfaceTessellationSettings& tessellation_settings
 ) {
     std::vector<SurfacePickHit> hits;
-    if (segments_per_knot_span == 0) {
-        return hits;
-    }
+    static cad::SurfaceTessellationCache mesh_cache;
     const cad::GeometryTolerance tolerance = cad::GeometryTolerance::defaults();
     for (const SceneNode& node : scene.nodes()) {
         if (!node.visible || node.surface == nullptr) {
@@ -100,14 +93,15 @@ std::vector<SurfacePickHit> pick_surfaces(
         if (!bounds || !cad::intersect_ray_aabb(ray, *bounds, tolerance)) {
             continue;
         }
-        const auto samples = sample_surface_by_knot_spans(
+        const auto mesh = mesh_cache.get(
             *node.surface,
-            segments_per_knot_span
+            node.geometry_revision,
+            tessellation_settings
         );
-        if (!samples) {
+        if (!mesh) {
             continue;
         }
-        const auto distance = intersect_sample_grid(ray, *samples);
+        const auto distance = intersect_mesh(ray, **mesh);
         if (distance) {
             hits.push_back(SurfacePickHit{node.id, *distance, ray.at(*distance)});
         }

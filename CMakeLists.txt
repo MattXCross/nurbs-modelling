@@ -33,6 +33,7 @@ add_library(cad_geometry STATIC
     src/geometry_queries.cpp
     src/nurbs_surface.cpp
     src/surface_sampling.cpp
+    src/surface_tessellation.cpp
 )
 target_include_directories(cad_geometry PUBLIC include)
 
@@ -169,6 +170,13 @@ if(BUILD_TESTING)
     target_link_libraries(surface_picking_test PRIVATE cad_editor)
     enable_project_warnings(surface_picking_test)
     add_test(NAME surface_picking_test COMMAND surface_picking_test)
+
+    add_executable(surface_tessellation_test
+        tests/surface_tessellation_test.cpp
+    )
+    target_link_libraries(surface_tessellation_test PRIVATE cad_geometry)
+    enable_project_warnings(surface_tessellation_test)
+    add_test(NAME surface_tessellation_test COMMAND surface_tessellation_test)
 endif()
 
 add_executable(cad_app main.cpp)

@@ -5,6 +5,7 @@
 #include "raylib.h"
 #include "rlgl.h"
 #include "scene.h"
+#include "surface_tessellation.h"
 #include "viewport_math.h"
 
 #include <algorithm>
@@ -14,7 +15,7 @@
 #include <numbers>
 #include <span>
 #include <type_traits>
-#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -270,21 +271,14 @@ public:
             }
 
             draw_control_net(node.id, *node.surface, selected_points);
-            CachedSurface& cached = m_surface_cache[node.id.value];
-            if (cached.surface != node.surface.get() || cached.revision != node.geometry_revision) {
-                cached.line_vertices = tessellate_wireframe(*node.surface, 100, 100);
-                cached.surface = node.surface.get();
-                cached.revision = node.geometry_revision;
-            }
+            const auto mesh = m_mesh_cache.get(
+                *node.surface, node.geometry_revision, m_tessellation_settings
+            );
             const Color surface_color = selected_entity == node.id
                 ? GOLD
                 : (hovered_entity == node.id ? SKYBLUE : BLUE);
-            for (std::size_t index = 0; index + 1 < cached.line_vertices.size(); index += 2) {
-                DrawLine3D(
-                    cached.line_vertices[index],
-                    cached.line_vertices[index + 1],
-                    surface_color
-                );
+            if (mesh) {
+                draw_mesh_edges(**mesh, surface_color);
             }
         }
         for (const GizmoPrimitive& gizmo : gizmos) {
@@ -300,78 +294,32 @@ public:
         draw_orientation_triad(camera, framebuffer_height);
         rlDrawRenderBatchActive();
 
-        std::erase_if(m_surface_cache, [&scene](const auto& entry) {
-            return scene.find_entity(EntityId{entry.first}) == nullptr;
-        });
     }
 
 private:
-    struct CachedSurface {
-        const NurbsSurface* surface{nullptr};
-        std::uint64_t revision{0};
-        std::vector<Vector3> line_vertices;
-    };
-
-    static std::vector<Vector3> tessellate_wireframe(
-        const NurbsSurface& surface,
-        std::size_t u_segments,
-        std::size_t v_segments
-    ) {
-        const auto u_domain = surface.u_domain();
-        const auto v_domain = surface.v_domain();
-        if (!u_domain.has_value() || !v_domain.has_value() ||
-            u_segments == 0 || v_segments == 0) {
-            return {};
-        }
-        const auto [u_min, u_max] = *u_domain;
-        const auto [v_min, v_max] = *v_domain;
-        const std::size_t row_size = v_segments + 1;
-        std::vector<Vector3> samples((u_segments + 1) * (v_segments + 1));
-        std::vector<bool> valid(samples.size(), false);
-
-        for (std::size_t u = 0; u <= u_segments; ++u) {
-            const double u_parameter = u_min + (u_max - u_min) *
-                static_cast<double>(u) / static_cast<double>(u_segments);
-            for (std::size_t v = 0; v <= v_segments; ++v) {
-                const double v_parameter = v_min + (v_max - v_min) *
-                    static_cast<double>(v) / static_cast<double>(v_segments);
-                const auto point = surface.evaluate(u_parameter, v_parameter);
-                const std::size_t index = u * row_size + v;
-                if (point.has_value()) {
-                    samples[index] = to_raylib(*point);
-                    valid[index] = true;
+    static void draw_mesh_edges(const cad::SurfaceMesh& mesh, Color color) {
+        std::unordered_set<std::uint64_t> drawn;
+        for (std::size_t index = 0; index + 2 < mesh.triangle_indices.size(); index += 3) {
+            const std::array triangle{
+                mesh.triangle_indices[index], mesh.triangle_indices[index + 1],
+                mesh.triangle_indices[index + 2]
+            };
+            for (std::size_t edge = 0; edge < 3; ++edge) {
+                const std::uint32_t a = triangle[edge];
+                const std::uint32_t b = triangle[(edge + 1) % 3];
+                if (a >= mesh.positions.size() || b >= mesh.positions.size()) continue;
+                const std::uint32_t low = std::min(a, b);
+                const std::uint32_t high = std::max(a, b);
+                const std::uint64_t key = (static_cast<std::uint64_t>(low) << 32) | high;
+                if (drawn.insert(key).second) {
+                    DrawLine3D(to_raylib(mesh.positions[a]), to_raylib(mesh.positions[b]), color);
                 }
             }
         }
-
-        std::vector<Vector3> lines;
-        lines.reserve(2 * (
-            u_segments * (v_segments + 1) +
-            v_segments * (u_segments + 1)
-        ));
-        for (std::size_t u = 0; u <= u_segments; ++u) {
-            for (std::size_t v = 0; v <= v_segments; ++v) {
-                const std::size_t index = u * row_size + v;
-                if (u < u_segments) {
-                    const std::size_t next_u = (u + 1) * row_size + v;
-                    if (valid[index] && valid[next_u]) {
-                        lines.push_back(samples[index]);
-                        lines.push_back(samples[next_u]);
-                    }
-                }
-                if (v < v_segments) {
-                    const std::size_t next_v = index + 1;
-                    if (valid[index] && valid[next_v]) {
-                        lines.push_back(samples[index]);
-                        lines.push_back(samples[next_v]);
-                    }
-                }
-            }
-        }
-        return lines;
     }
 
-    std::unordered_map<std::uint64_t, CachedSurface> m_surface_cache;
+    cad::SurfaceTessellationSettings m_tessellation_settings{};
+    cad::SurfaceTessellationCache m_mesh_cache;
 };
 
 RaylibViewportRenderer::RaylibViewportRenderer()

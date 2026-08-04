@@ -100,7 +100,7 @@ void test_nearest_and_hidden_surface_picking() {
     if (!ray) {
         return;
     }
-    auto hits = pick_surfaces(scene, *ray, 2);
+    auto hits = pick_surfaces(scene, *ray);
     expect(hits.size() == 2, "ray hits both overlapping surfaces");
     if (hits.size() == 2) {
         expect(hits[0].entity == EntityId{20}, "nearest surface is first");
@@ -110,13 +110,16 @@ void test_nearest_and_hidden_surface_picking() {
     }
 
     expect(scene.set_entity_visibility(EntityId{20}, false).has_value(), "hide near plane");
-    hits = pick_surfaces(scene, *ray, 2);
+    hits = pick_surfaces(scene, *ray);
     expect(hits.size() == 1 && hits.front().entity == EntityId{10},
         "hidden surface cannot be picked");
 
     const auto miss = make_viewport_ray({0.0f, 0.0f}, 800, 600, test_camera());
-    expect(miss && pick_surfaces(scene, *miss, 2).empty(), "ray outside surface misses");
-    expect(pick_surfaces(scene, *ray, 0).empty(), "invalid sampling count returns no hits");
+    expect(miss && pick_surfaces(scene, *miss).empty(), "ray outside surface misses");
+    cad::SurfaceTessellationSettings invalid_settings;
+    invalid_settings.chordal_tolerance = 0.0;
+    expect(pick_surfaces(scene, *ray, invalid_settings).empty(),
+           "invalid tessellation settings return no hits");
 }
 
 void test_hover_and_selection_cycling() {
