@@ -252,6 +252,31 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_toggle_visibility_action, &QAction::triggered, this,
         [this] { toggle_selected_entity_visibility(); });
 
+    auto* fit_all_action = new QAction("Fit All", this);
+    connect(fit_all_action, &QAction::triggered, this, [this] {
+        (void)m_session.fit_all(m_viewport->width(), m_viewport->height());
+    });
+    m_frame_selection_action = new QAction("Frame Selection", this);
+    connect(m_frame_selection_action, &QAction::triggered, this, [this] {
+        (void)m_session.frame_selection(m_viewport->width(), m_viewport->height());
+    });
+
+    m_perspective_action = new QAction("Perspective", this);
+    m_orthographic_action = new QAction("Orthographic", this);
+    auto* projection_group = new QActionGroup(this);
+    projection_group->setExclusive(true);
+    for (QAction* action : {m_perspective_action, m_orthographic_action}) {
+        action->setCheckable(true);
+        projection_group->addAction(action);
+    }
+    m_perspective_action->setChecked(true);
+    connect(m_perspective_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_camera_projection(ProjectionMode::perspective);
+    });
+    connect(m_orthographic_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_camera_projection(ProjectionMode::orthographic);
+    });
+
     m_outliner->setContextMenuPolicy(Qt::ActionsContextMenu);
     m_outliner->addAction(m_create_surface_action);
     m_outliner->addAction(m_rename_entity_action);
@@ -306,6 +331,26 @@ MainWindow::MainWindow(QWidget* parent)
     pivot_menu->addAction(m_primary_pivot_action);
     pivot_menu->addAction(m_origin_pivot_action);
     auto* view_menu = menuBar()->addMenu("View");
+    view_menu->addAction(fit_all_action);
+    view_menu->addAction(m_frame_selection_action);
+    auto* standard_view_menu = view_menu->addMenu("Standard View");
+    for (const auto& [label, view] : std::array{
+             std::pair{"Front", StandardView::front},
+             std::pair{"Back", StandardView::back},
+             std::pair{"Top", StandardView::top},
+             std::pair{"Bottom", StandardView::bottom},
+             std::pair{"Left", StandardView::left},
+             std::pair{"Right", StandardView::right}
+         }) {
+        QAction* action = standard_view_menu->addAction(label);
+        connect(action, &QAction::triggered, this, [this, view] {
+            m_session.set_standard_view(view);
+        });
+    }
+    auto* projection_menu = view_menu->addMenu("Projection");
+    projection_menu->addAction(m_perspective_action);
+    projection_menu->addAction(m_orthographic_action);
+    view_menu->addSeparator();
     view_menu->addAction(m_outliner_dock->toggleViewAction());
     view_menu->addAction(m_inspector_dock->toggleViewAction());
     auto* help_menu = menuBar()->addMenu("Help");
@@ -715,10 +760,10 @@ void MainWindow::handle_editor_change(EditorChange change) {
         m_inspector->refresh();
     }
     if (change.selection || change.entities || change.geometry || change.hover ||
-        change.interaction_mode) {
+        change.interaction_mode || change.camera) {
         m_viewport->update();
     }
-    if (change.selection || change.history || change.interaction_mode) {
+    if (change.selection || change.history || change.interaction_mode || change.camera) {
         refresh_ui_state();
     }
 }
@@ -785,6 +830,10 @@ void MainWindow::refresh_ui_state() {
     m_toggle_visibility_action->setText(
         has_entity && !selected_node->visible ? "Show" : "Hide"
     );
+    m_frame_selection_action->setEnabled(!m_session.selection().empty());
+    const bool perspective = m_session.camera().projection == ProjectionMode::perspective;
+    m_perspective_action->setChecked(perspective);
+    m_orthographic_action->setChecked(!perspective);
 
     const std::span selected_points = m_session.selection().control_points();
     if (!selected_points.empty()) {

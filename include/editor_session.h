@@ -72,6 +72,12 @@ public:
     [[nodiscard]] bool set_transform_orientation(TransformOrientation orientation);
     [[nodiscard]] bool clear_selection();
     [[nodiscard]] bool set_selection_mode(SelectionMode mode);
+    [[nodiscard]] bool fit_all(int viewport_width, int viewport_height);
+    [[nodiscard]] bool frame_selection(int viewport_width, int viewport_height);
+    void set_standard_view(StandardView view);
+    [[nodiscard]] bool set_camera_projection(ProjectionMode projection);
+    [[nodiscard]] cad::Aabb3 visible_bounds() const;
+    [[nodiscard]] cad::Aabb3 selected_bounds() const;
 
     [[nodiscard]] bool undo();
     [[nodiscard]] bool redo();

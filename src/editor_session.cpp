@@ -241,6 +241,11 @@ EditorSession::SelectionOperation selection_operation(ModifierKeys modifiers) {
         EditorSession::SelectionOperation::replace;
 }
 
+void expand_bounds(cad::Aabb3& destination, const cad::Aabb3& source) {
+    if (const auto minimum = source.minimum()) (void)destination.expand(*minimum);
+    if (const auto maximum = source.maximum()) (void)destination.expand(*maximum);
+}
+
 } // namespace
 
 EditorSession::NotificationBatch::NotificationBatch(EditorSession& session)
@@ -626,6 +631,74 @@ bool EditorSession::set_selection_mode(SelectionMode mode) {
         .selection = selection_changed,
         .interaction_mode = true
     });
+    return true;
+}
+
+cad::Aabb3 EditorSession::visible_bounds() const {
+    cad::Aabb3 bounds;
+    for (const SceneNode& node : m_scene.nodes()) {
+        if (node.visible && node.surface != nullptr) {
+            if (const auto entity_bounds = node.surface->control_bounds()) {
+                expand_bounds(bounds, *entity_bounds);
+            }
+        }
+    }
+    return bounds;
+}
+
+cad::Aabb3 EditorSession::selected_bounds() const {
+    cad::Aabb3 bounds;
+    const std::span points = m_selection.control_points();
+    if (!points.empty()) {
+        for (const ControlPointSelection selection : points) {
+            if (const ControlPoint* point = m_scene.resolve(selection)) {
+                (void)bounds.expand(point->position);
+            }
+        }
+        return bounds;
+    }
+    if (const EntitySelection* selection = m_selection.entity()) {
+        const SceneNode* node = m_scene.find_entity(selection->entity);
+        if (node != nullptr && node->surface != nullptr) {
+            if (const auto entity_bounds = node->surface->control_bounds()) {
+                expand_bounds(bounds, *entity_bounds);
+            }
+        }
+    }
+    return bounds;
+}
+
+bool EditorSession::fit_all(int viewport_width, int viewport_height) {
+    if (viewport_width <= 0 || viewport_height <= 0 ||
+        !m_camera_controller.frame_bounds(
+            visible_bounds(), static_cast<double>(viewport_width) / viewport_height
+        )) {
+        return false;
+    }
+    notify(EditorChange{.camera = true});
+    return true;
+}
+
+bool EditorSession::frame_selection(int viewport_width, int viewport_height) {
+    if (viewport_width <= 0 || viewport_height <= 0 ||
+        !m_camera_controller.frame_bounds(
+            selected_bounds(), static_cast<double>(viewport_width) / viewport_height
+        )) {
+        return false;
+    }
+    notify(EditorChange{.camera = true});
+    return true;
+}
+
+void EditorSession::set_standard_view(StandardView view) {
+    m_camera_controller.set_standard_view(view);
+    notify(EditorChange{.camera = true});
+}
+
+bool EditorSession::set_camera_projection(ProjectionMode projection) {
+    if (m_camera_controller.camera().projection == projection) return false;
+    m_camera_controller.set_projection(projection);
+    notify(EditorChange{.camera = true});
     return true;
 }
 

@@ -37,7 +37,12 @@ public:
         }
 
         if (input.mouse_wheel_delta != 0.0f) {
-            camera_controller.zoom(input.mouse_wheel_delta);
+            camera_controller.zoom(
+                input.mouse_wheel_delta,
+                input.mouse_position,
+                input.screen_width,
+                input.screen_height
+            );
         }
     }
 };

@@ -20,61 +20,16 @@ constexpr GizmoColor plane_xy{253, 249, 0, 166};
 constexpr GizmoColor plane_xz{255, 0, 255, 166};
 constexpr GizmoColor plane_yz{102, 191, 255, 166};
 
-cad::Point3 at_render_precision(cad::Point3 point) {
-    return {
-        static_cast<double>(static_cast<float>(point.x)),
-        static_cast<double>(static_cast<float>(point.y)),
-        static_cast<double>(static_cast<float>(point.z))
-    };
-}
-
-cad::Vector3 at_render_precision(cad::Vector3 vector) {
-    return {
-        static_cast<double>(static_cast<float>(vector.x)),
-        static_cast<double>(static_cast<float>(vector.y)),
-        static_cast<double>(static_cast<float>(vector.z))
-    };
-}
-
-Vec2 project_to_viewport(
-    cad::Point3 world_position,
-    const CameraState& camera,
-    int viewport_width,
-    int viewport_height
-) {
-    constexpr double degrees_to_radians = std::numbers::pi / 180.0;
-    const cad::Point3 camera_position = at_render_precision(camera.position);
-    const cad::Point3 camera_target = at_render_precision(camera.target);
-    const cad::Vector3 camera_up = at_render_precision(camera.up);
-    world_position = at_render_precision(world_position);
-    const cad::Vector3 forward =
-        cad::normalized(camera_target - camera_position).value_or(cad::Vector3{});
-    const cad::Vector3 right =
-        cad::normalized(cad::cross(forward, camera_up)).value_or(cad::Vector3{});
-    const cad::Vector3 screen_up =
-        cad::normalized(cad::cross(right, forward)).value_or(cad::Vector3{});
-    const cad::Vector3 offset = world_position - camera_position;
-    const double depth = cad::dot(offset, forward);
-    const double half_height = depth * std::tan(
-        static_cast<double>(camera.vertical_fov_degrees) * degrees_to_radians * 0.5
-    );
-    const double aspect = static_cast<double>(viewport_width) /
-        static_cast<double>(viewport_height);
-    const double normalized_x = cad::dot(offset, right) / (half_height * aspect);
-    const double normalized_y = cad::dot(offset, screen_up) / half_height;
-    return {
-        static_cast<float>((normalized_x + 1.0) * 0.5 * viewport_width),
-        static_cast<float>((1.0 - normalized_y) * 0.5 * viewport_height)
-    };
-}
-
 double gizmo_world_scale(cad::Point3 pivot, const CameraState& camera, int viewport_height) {
     if (viewport_height <= 0) {
         return 0.0;
     }
-    return cad::distance(camera.position, pivot) * 2.0 * std::tan(
-        static_cast<double>(camera.vertical_fov_degrees) * std::numbers::pi / 360.0
-    ) * 80.0 / static_cast<double>(viewport_height);
+    const double vertical_size = camera.projection == ProjectionMode::orthographic
+        ? camera.orthographic_vertical_size
+        : cad::distance(camera.position, pivot) * 2.0 * std::tan(
+            static_cast<double>(camera.vertical_fov_degrees) * std::numbers::pi / 360.0
+        );
+    return vertical_size * 80.0 / static_cast<double>(viewport_height);
 }
 
 double point_segment_distance(Vec2 point, Vec2 start, Vec2 end) {

@@ -402,6 +402,47 @@ void test_new_blank_document() {
     expect(!session.is_dirty(), "new document starts clean");
 }
 
+void test_camera_framing_brokerage() {
+    EditorSession session;
+    Scene scene;
+    const auto visible = scene.add_entity("Visible", make_surface(0.0));
+    const auto hidden = scene.add_entity("Hidden", make_surface(100.0));
+    expect(visible && hidden, "create framing scene");
+    if (!visible || !hidden) return;
+    expect(scene.set_entity_visibility(*hidden, false).has_value(), "hide framing entity");
+    session.replace_document(std::move(scene));
+
+    int camera_notifications = 0;
+    session.set_change_handler([&camera_notifications](EditorChange change) {
+        if (change.camera) ++camera_notifications;
+    });
+    expect(session.fit_all(800, 600), "session fits visible geometry");
+    expect(session.camera().target == cad::Point3{0.5, 0.0, 0.5},
+        "fit-all excludes hidden geometry");
+    expect(session.select_entity(EntitySelection{*hidden}), "select hidden entity for framing");
+    expect(session.frame_selection(800, 600), "session frames selected object");
+    expect(session.camera().target == cad::Point3{100.5, 0.0, 0.5},
+        "object framing uses selected bounds");
+
+    expect(session.set_selection_mode(EditorSession::SelectionMode::control_point),
+        "enter point mode for point framing");
+    expect(session.select_control_points({{*visible, 0, 0}, {*visible, 1, 1}}),
+        "select points for framing");
+    expect(session.frame_selection(800, 600), "session frames selected points");
+    expect(session.camera().target == cad::Point3{0.5, 0.0, 0.5},
+        "point framing uses only selected positions");
+    expect(session.set_camera_projection(ProjectionMode::orthographic),
+        "session switches projection");
+    expect(!session.set_camera_projection(ProjectionMode::orthographic),
+        "unchanged projection is ignored");
+    session.set_standard_view(StandardView::top);
+    expect(camera_notifications == 5, "camera commands publish camera notifications");
+
+    session.replace_document(Scene{});
+    expect(!session.fit_all(800, 600), "empty scene cannot be fitted");
+    expect(!session.frame_selection(800, 600), "empty selection cannot be framed");
+}
+
 } // namespace
 
 int main() {
@@ -417,6 +458,7 @@ int main() {
     test_local_transform_frame();
     test_replace_document_clears_transient_state();
     test_new_blank_document();
+    test_camera_framing_brokerage();
 
     if (failures != 0) {
         std::cerr << failures << " editor session test(s) failed\n";

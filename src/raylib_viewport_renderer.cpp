@@ -5,6 +5,7 @@
 #include "raylib.h"
 #include "rlgl.h"
 #include "scene.h"
+#include "viewport_math.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,8 +43,78 @@ Camera3D to_raylib(const CameraState& camera) {
         .target = to_raylib(camera.target),
         .up = to_raylib(camera.up),
         .fovy = camera.vertical_fov_degrees,
-        .projection = CAMERA_PERSPECTIVE
+        .projection = camera.projection == ProjectionMode::perspective
+            ? CAMERA_PERSPECTIVE : CAMERA_ORTHOGRAPHIC
     };
+}
+
+cad::Aabb3 visible_bounds(const Scene& scene) {
+    cad::Aabb3 bounds;
+    for (const SceneNode& node : scene.nodes()) {
+        if (!node.visible || node.surface == nullptr) continue;
+        const auto entity_bounds = node.surface->control_bounds();
+        if (!entity_bounds) continue;
+        if (const auto minimum = entity_bounds->minimum()) (void)bounds.expand(*minimum);
+        if (const auto maximum = entity_bounds->maximum()) (void)bounds.expand(*maximum);
+    }
+    return bounds;
+}
+
+void draw_axis_letter(char letter, Vector2 center, Color color) {
+    constexpr float size = 4.0f;
+    const auto line = [color](Vector2 start, Vector2 end) {
+        DrawLineEx(start, end, 2.0f, color);
+    };
+    if (letter == 'X') {
+        line({center.x - size, center.y - size}, {center.x + size, center.y + size});
+        line({center.x - size, center.y + size}, {center.x + size, center.y - size});
+    } else if (letter == 'Y') {
+        line({center.x - size, center.y - size}, center);
+        line({center.x + size, center.y - size}, center);
+        line(center, {center.x, center.y + size});
+    } else {
+        line({center.x - size, center.y - size}, {center.x + size, center.y - size});
+        line({center.x + size, center.y - size}, {center.x - size, center.y + size});
+        line({center.x - size, center.y + size}, {center.x + size, center.y + size});
+    }
+}
+
+void draw_orientation_triad(const CameraState& camera, int framebuffer_height) {
+    const auto forward = cad::normalized(camera.target - camera.position);
+    const auto right = forward ? cad::normalized(cad::cross(*forward, camera.up)) : std::nullopt;
+    const auto up = right && forward ? cad::normalized(cad::cross(*right, *forward)) : std::nullopt;
+    if (!right || !up || !forward) return;
+
+    const Vector2 origin{48.0f, static_cast<float>(framebuffer_height) - 48.0f};
+    struct Axis { cad::Vector3 direction; Color color; char label; };
+    for (const Axis axis : {
+             Axis{{0.0, 0.0, 1.0}, BLUE, 'Z'},
+             Axis{{0.0, 1.0, 0.0}, GREEN, 'Y'},
+             Axis{{1.0, 0.0, 0.0}, RED, 'X'}
+         }) {
+        const double screen_x = cad::dot(axis.direction, *right);
+        const double screen_y = cad::dot(axis.direction, *up);
+        Vector2 end{
+            origin.x + static_cast<float>(screen_x * 30.0),
+            origin.y - static_cast<float>(screen_y * 30.0)
+        };
+        if (std::hypot(end.x - origin.x, end.y - origin.y) < 3.0f) {
+            const float sign = cad::dot(axis.direction, *forward) >= 0.0 ? 1.0f : -1.0f;
+            end = {origin.x + sign * 6.0f, origin.y + sign * 6.0f};
+        }
+        DrawLineEx(origin, end, 3.0f, axis.color);
+        DrawCircleV(end, 4.0f, axis.color);
+        const cad::Vector2 label_direction = cad::normalized(cad::Vector2{
+            end.x - origin.x, end.y - origin.y
+        }).value_or(cad::Vector2{1.0, 0.0});
+        draw_axis_letter(
+            axis.label,
+            {end.x + static_cast<float>(label_direction.x * 9.0),
+             end.y + static_cast<float>(label_direction.y * 9.0)},
+            axis.color
+        );
+    }
+    DrawCircleV(origin, 4.0f, LIGHTGRAY);
 }
 
 void draw_control_net(
@@ -169,18 +240,25 @@ public:
         const double aspect = static_cast<double>(framebuffer_width) /
             static_cast<double>(framebuffer_height);
         constexpr double degrees_to_radians = 3.14159265358979323846 / 180.0;
-        const double near_plane = rlGetCullDistanceNear();
-        const double far_plane = rlGetCullDistanceFar();
-        const double top = near_plane * std::tan(
-            static_cast<double>(camera.vertical_fov_degrees) * degrees_to_radians * 0.5
-        );
-        const double right = top * aspect;
+        const ClipPlanes clipping = derive_clip_planes(camera, visible_bounds(scene));
 
         rlClearColor(16, 20, 26, 255);
         rlClearScreenBuffers();
         rlMatrixMode(RL_PROJECTION);
         rlLoadIdentity();
-        rlFrustum(-right, right, -top, top, near_plane, far_plane);
+        if (camera.projection == ProjectionMode::perspective) {
+            const double top = clipping.near_plane * std::tan(
+                static_cast<double>(camera.vertical_fov_degrees) * degrees_to_radians * 0.5
+            );
+            const double right = top * aspect;
+            rlFrustum(
+                -right, right, -top, top, clipping.near_plane, clipping.far_plane
+            );
+        } else {
+            const double top = camera.orthographic_vertical_size * 0.5;
+            const double right = top * aspect;
+            rlOrtho(-right, right, -top, top, clipping.near_plane, clipping.far_plane);
+        }
         rlMatrixMode(RL_MODELVIEW);
         rlSetMatrixModelview(GetCameraMatrix(to_raylib(camera)));
         rlEnableDepthTest();
@@ -214,6 +292,13 @@ public:
         }
         rlDrawRenderBatchActive();
         rlDisableDepthTest();
+        rlMatrixMode(RL_PROJECTION);
+        rlLoadIdentity();
+        rlOrtho(0.0, framebuffer_width, framebuffer_height, 0.0, -1.0, 1.0);
+        rlMatrixMode(RL_MODELVIEW);
+        rlLoadIdentity();
+        draw_orientation_triad(camera, framebuffer_height);
+        rlDrawRenderBatchActive();
 
         std::erase_if(m_surface_cache, [&scene](const auto& entry) {
             return scene.find_entity(EntityId{entry.first}) == nullptr;

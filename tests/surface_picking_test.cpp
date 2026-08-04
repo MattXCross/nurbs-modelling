@@ -64,6 +64,34 @@ void test_viewport_ray() {
     expect(!make_viewport_ray({}, 800, 600, degenerate), "degenerate camera is rejected");
 }
 
+void test_orthographic_viewport_rays_and_clipping() {
+    CameraState camera = test_camera();
+    camera.projection = ProjectionMode::orthographic;
+    camera.orthographic_vertical_size = 6.0;
+    const auto center = make_viewport_ray({400.0f, 300.0f}, 800, 600, camera);
+    const auto corner = make_viewport_ray({800.0f, 0.0f}, 800, 600, camera);
+    expect(center && corner, "orthographic rays are valid");
+    if (center && corner) {
+        expect(center->direction() == corner->direction(), "orthographic rays are parallel");
+        expect(center->origin() != corner->origin(), "orthographic rays have screen-space origins");
+        expect(corner->origin() == cad::Point3{4.0, 3.0, 10.0},
+            "orthographic ray origin uses aspect and vertical size");
+    }
+    cad::Aabb3 visible;
+    (void)visible.expand({-1.0, -1.0, -1e6});
+    (void)visible.expand({1.0, 1.0, 1.0});
+    const ClipPlanes clipping = derive_clip_planes(camera, visible);
+    expect(clipping.near_plane > 0.0 && clipping.far_plane > clipping.near_plane,
+        "visible bounds produce valid clipping planes");
+    expect(clipping.far_plane > 1e6, "large visible bounds remain inside far clipping");
+    cad::Aabb3 tiny;
+    (void)tiny.expand({-1e-9, -1e-9, -1e-9});
+    (void)tiny.expand({1e-9, 1e-9, 1e-9});
+    const ClipPlanes tiny_clipping = derive_clip_planes(camera, tiny);
+    expect(tiny_clipping.near_plane > 0.0 && tiny_clipping.far_plane > tiny_clipping.near_plane,
+        "tiny visible bounds produce valid clipping planes");
+}
+
 void test_nearest_and_hidden_surface_picking() {
     Scene scene;
     expect(scene.add_entity(EntityId{10}, "Far", true, make_plane(0.0)).has_value(), "add far plane");
@@ -450,6 +478,7 @@ void test_gizmo_draw_data() {
 
 int main() {
     test_viewport_ray();
+    test_orthographic_viewport_rays_and_clipping();
     test_nearest_and_hidden_surface_picking();
     test_hover_and_selection_cycling();
     test_control_point_rectangle_selection();
