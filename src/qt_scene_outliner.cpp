@@ -19,8 +19,9 @@ std::optional<EntityId> selected_entity(const Selection& selection) {
     if (const auto* entity = std::get_if<EntitySelection>(&selection)) {
         return entity->entity;
     }
-    if (const auto* point = std::get_if<ControlPointSelection>(&selection)) {
-        return point->entity;
+    if (const auto* points = std::get_if<ControlPointSelections>(&selection);
+        points != nullptr && !points->empty()) {
+        return points->back().entity;
     }
     return std::nullopt;
 }

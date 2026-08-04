@@ -5,8 +5,9 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 
-struct ControlPoint;
+struct ControlPointSelection;
 class Scene;
 
 class RaylibViewportRenderer {
@@ -20,7 +21,7 @@ public:
     void render(
         const Scene& scene,
         const CameraState& camera,
-        const ControlPoint* selected_point,
+        std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
         int framebuffer_width,

@@ -18,6 +18,7 @@ public:
 
     enum class ControlPointField { position_x, position_y, position_z, weight };
     enum class SelectionMode { object, control_point };
+    enum class SelectionOperation { replace, add, toggle };
 
     EditorSession();
 
@@ -30,7 +31,19 @@ public:
     void set_change_handler(ChangeHandler handler);
 
     [[nodiscard]] bool select_entity(EntitySelection selection);
-    [[nodiscard]] bool select_control_point(ControlPointSelection selection);
+    [[nodiscard]] bool select_control_point(
+        ControlPointSelection selection,
+        SelectionOperation operation = SelectionOperation::replace
+    );
+    [[nodiscard]] bool select_control_points(
+        std::vector<ControlPointSelection> selections,
+        SelectionOperation operation = SelectionOperation::replace
+    );
+    [[nodiscard]] bool select_all_control_points();
+    [[nodiscard]] bool select_control_point_row();
+    [[nodiscard]] bool select_control_point_column();
+    [[nodiscard]] bool grow_control_point_selection();
+    [[nodiscard]] bool shrink_control_point_selection();
     [[nodiscard]] bool clear_selection();
     [[nodiscard]] bool set_selection_mode(SelectionMode mode);
 
@@ -85,9 +98,9 @@ private:
     };
 
     struct PendingEdit {
-        ControlPointSelection selection;
+        std::vector<ControlPointSelection> selections;
         ControlPointField field;
-        double initial_value{0.0};
+        std::vector<double> initial_values;
     };
 
     [[nodiscard]] bool cancel_pending_edit();

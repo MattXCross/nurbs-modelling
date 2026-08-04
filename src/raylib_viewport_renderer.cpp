@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -42,11 +43,20 @@ Camera3D to_raylib(const CameraState& camera) {
     };
 }
 
-void draw_control_net(const NurbsSurface& surface, const ControlPoint* selected_point) {
+void draw_control_net(
+    EntityId entity,
+    const NurbsSurface& surface,
+    std::span<const ControlPointSelection> selected_points
+) {
     const auto net = surface.control_net_2d();
     for (std::size_t u = 0; u < net.extent(0); ++u) {
         for (std::size_t v = 0; v < net.extent(1); ++v) {
-            const bool is_selected = &net[u, v] == selected_point;
+            const bool is_selected = std::ranges::any_of(
+                selected_points,
+                [entity, u, v](ControlPointSelection selection) {
+                    return selection.entity == entity && selection.u == u && selection.v == v;
+                }
+            );
             const Vector3 position = to_raylib(net[u, v].position);
             DrawSphere(position, is_selected ? 0.24f : 0.15f, is_selected ? GOLD : RED);
 
@@ -67,7 +77,7 @@ public:
     void render(
         const Scene& scene,
         const CameraState& camera,
-        const ControlPoint* selected_point,
+        std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
         int framebuffer_width,
@@ -100,7 +110,7 @@ public:
                 continue;
             }
 
-            draw_control_net(*node.surface, selected_point);
+            draw_control_net(node.id, *node.surface, selected_points);
             CachedSurface& cached = m_surface_cache[node.id.value];
             if (cached.surface != node.surface.get() || cached.revision != node.geometry_revision) {
                 cached.line_vertices = tessellate_wireframe(*node.surface, 100, 100);
@@ -203,7 +213,7 @@ RaylibViewportRenderer::~RaylibViewportRenderer() = default;
 void RaylibViewportRenderer::render(
     const Scene& scene,
     const CameraState& camera,
-    const ControlPoint* selected_point,
+    std::span<const ControlPointSelection> selected_points,
     std::optional<EntityId> selected_entity,
     std::optional<EntityId> hovered_entity,
     int framebuffer_width,
@@ -212,7 +222,7 @@ void RaylibViewportRenderer::render(
     m_impl->render(
         scene,
         camera,
-        selected_point,
+        selected_points,
         selected_entity,
         hovered_entity,
         framebuffer_width,

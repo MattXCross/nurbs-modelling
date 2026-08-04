@@ -3,8 +3,11 @@
 #include "core.h"
 #include "nurbs_surface.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
+#include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -48,28 +51,59 @@ void set_field_value(
     }
 }
 
-class AppliedValueCommand final : public ICommand {
+bool apply_field_values(
+    Scene& scene,
+    const std::vector<ControlPointSelection>& selections,
+    EditorSession::ControlPointField field,
+    const std::vector<double>& values
+) {
+    if (selections.size() != values.size()) {
+        return false;
+    }
+    std::vector<ControlPoint> originals;
+    originals.reserve(selections.size());
+    for (const ControlPointSelection selection : selections) {
+        const ControlPoint* point = scene.resolve(selection);
+        if (point == nullptr) {
+            return false;
+        }
+        originals.push_back(*point);
+    }
+    for (std::size_t index = 0; index < selections.size(); ++index) {
+        ControlPoint updated = originals[index];
+        set_field_value(updated, field, values[index]);
+        if (!scene.set_control_point(selections[index], updated).has_value()) {
+            for (std::size_t rollback = 0; rollback < index; ++rollback) {
+                (void)scene.set_control_point(selections[rollback], originals[rollback]);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+class AppliedValuesCommand final : public ICommand {
 public:
-    AppliedValueCommand(
+    AppliedValuesCommand(
         std::string description,
-        std::move_only_function<bool(double)> set_value,
-        double initial_value,
-        double final_value
+        std::move_only_function<bool(const std::vector<double>&)> set_values,
+        std::vector<double> initial_values,
+        std::vector<double> final_values
     )
         : m_description(std::move(description)),
-          m_set_value(std::move(set_value)),
-          m_initial_value(initial_value),
-          m_final_value(final_value) {}
+          m_set_values(std::move(set_values)),
+          m_initial_values(std::move(initial_values)),
+          m_final_values(std::move(final_values)) {}
 
     [[nodiscard]] std::string_view description() const override { return m_description; }
-    bool undo() override { return m_set_value(m_initial_value); }
-    bool redo() override { return m_set_value(m_final_value); }
+    bool undo() override { return m_set_values(m_initial_values); }
+    bool redo() override { return m_set_values(m_final_values); }
 
 private:
     std::string m_description;
-    std::move_only_function<bool(double)> m_set_value;
-    double m_initial_value{0.0};
-    double m_final_value{0.0};
+    std::move_only_function<bool(const std::vector<double>&)> m_set_values;
+    std::vector<double> m_initial_values;
+    std::vector<double> m_final_values;
 };
 
 class CreatedEntityCommand final : public ICommand {
@@ -197,14 +231,12 @@ private:
     bool m_final;
 };
 
-bool selection_references_entity(const Selection& selection, EntityId entity) {
-    if (const auto* selected_entity = std::get_if<EntitySelection>(&selection)) {
-        return selected_entity->entity == entity;
+EditorSession::SelectionOperation selection_operation(ModifierKeys modifiers) {
+    if (modifiers.ctrl) {
+        return EditorSession::SelectionOperation::toggle;
     }
-    if (const auto* selected_point = std::get_if<ControlPointSelection>(&selection)) {
-        return selected_point->entity == entity;
-    }
-    return false;
+    return modifiers.shift ? EditorSession::SelectionOperation::add :
+        EditorSession::SelectionOperation::replace;
 }
 
 } // namespace
@@ -247,8 +279,11 @@ EditorSession::EditorSession()
     );
     m_input_dispatcher.register_tools<ControlPointSelectionTool>(
         [this] { return m_selection_mode == SelectionMode::control_point; },
-        [this](ControlPointSelection selection) {
-            (void)select_control_point(selection);
+        [this](ControlPointSelection selection, ModifierKeys modifiers) {
+            (void)select_control_point(selection, selection_operation(modifiers));
+        },
+        [this](std::vector<ControlPointSelection> selections, ModifierKeys modifiers) {
+            (void)select_control_points(std::move(selections), selection_operation(modifiers));
         },
         [this] {
             (void)clear_selection();
@@ -282,23 +317,141 @@ bool EditorSession::select_entity(EntitySelection selection) {
     return true;
 }
 
-bool EditorSession::select_control_point(ControlPointSelection selection) {
+bool EditorSession::select_control_point(
+    ControlPointSelection selection,
+    SelectionOperation operation
+) {
+    return select_control_points({selection}, operation);
+}
+
+bool EditorSession::select_control_points(
+    std::vector<ControlPointSelection> selections,
+    SelectionOperation operation
+) {
     NotificationBatch notifications(*this);
     if (m_selection_mode != SelectionMode::control_point ||
-        m_scene.resolve(selection) == nullptr) {
-        return false;
-    }
-
-    const ControlPointSelection* current = m_selection.control_point();
-    if (current != nullptr && current->entity == selection.entity &&
-        current->u == selection.u && current->v == selection.v) {
+        std::ranges::any_of(selections, [this](ControlPointSelection selection) {
+            return m_scene.resolve(selection) == nullptr;
+        })) {
         return false;
     }
 
     (void)cancel_pending_edit();
-    m_selection.select(selection);
+    const Selection previous = m_selection.current();
+    if (operation == SelectionOperation::replace) {
+        m_selection.select(std::move(selections));
+    } else {
+        for (const ControlPointSelection selection : selections) {
+            if (operation == SelectionOperation::add) {
+                (void)m_selection.add(selection);
+            } else {
+                (void)m_selection.toggle(selection);
+            }
+        }
+    }
+    if (m_selection.current() == previous) {
+        return false;
+    }
     notify(EditorChange{.selection = true});
     return true;
+}
+
+bool EditorSession::select_all_control_points() {
+    const std::optional<EntityId> entity = selected_entity_id();
+    const SceneNode* node = entity ? m_scene.find_entity(*entity) : nullptr;
+    if (m_selection_mode != SelectionMode::control_point || node == nullptr ||
+        node->surface == nullptr) {
+        return false;
+    }
+    std::vector<ControlPointSelection> points;
+    points.reserve(node->surface->u_count() * node->surface->v_count());
+    for (std::size_t u = 0; u < node->surface->u_count(); ++u) {
+        for (std::size_t v = 0; v < node->surface->v_count(); ++v) {
+            points.push_back({*entity, u, v});
+        }
+    }
+    return select_control_points(std::move(points));
+}
+
+bool EditorSession::select_control_point_row() {
+    const ControlPointSelection* primary = m_selection.control_point();
+    const SceneNode* node = primary == nullptr ? nullptr : m_scene.find_entity(primary->entity);
+    if (node == nullptr || node->surface == nullptr) {
+        return false;
+    }
+    std::vector<ControlPointSelection> points;
+    points.reserve(node->surface->v_count());
+    for (std::size_t v = 0; v < node->surface->v_count(); ++v) {
+        points.push_back({primary->entity, primary->u, v});
+    }
+    return select_control_points(std::move(points));
+}
+
+bool EditorSession::select_control_point_column() {
+    const ControlPointSelection* primary = m_selection.control_point();
+    const SceneNode* node = primary == nullptr ? nullptr : m_scene.find_entity(primary->entity);
+    if (node == nullptr || node->surface == nullptr) {
+        return false;
+    }
+    std::vector<ControlPointSelection> points;
+    points.reserve(node->surface->u_count());
+    for (std::size_t u = 0; u < node->surface->u_count(); ++u) {
+        points.push_back({primary->entity, u, primary->v});
+    }
+    return select_control_points(std::move(points));
+}
+
+bool EditorSession::grow_control_point_selection() {
+    const std::span selected = m_selection.control_points();
+    if (m_selection_mode != SelectionMode::control_point || selected.empty()) {
+        return false;
+    }
+    std::vector<ControlPointSelection> grown{selected.begin(), selected.end()};
+    for (const ControlPointSelection point : selected) {
+        const SceneNode* node = m_scene.find_entity(point.entity);
+        if (node == nullptr || node->surface == nullptr) {
+            continue;
+        }
+        if (point.u > 0) {
+            grown.push_back({point.entity, point.u - 1, point.v});
+        }
+        if (point.u + 1 < node->surface->u_count()) {
+            grown.push_back({point.entity, point.u + 1, point.v});
+        }
+        if (point.v > 0) {
+            grown.push_back({point.entity, point.u, point.v - 1});
+        }
+        if (point.v + 1 < node->surface->v_count()) {
+            grown.push_back({point.entity, point.u, point.v + 1});
+        }
+    }
+    return select_control_points(std::move(grown));
+}
+
+bool EditorSession::shrink_control_point_selection() {
+    const std::span selected = m_selection.control_points();
+    if (m_selection_mode != SelectionMode::control_point || selected.empty()) {
+        return false;
+    }
+    const auto contains = [selected](ControlPointSelection candidate) {
+        return std::ranges::find(selected, candidate) != selected.end();
+    };
+    std::vector<ControlPointSelection> shrunk;
+    for (const ControlPointSelection point : selected) {
+        const SceneNode* node = m_scene.find_entity(point.entity);
+        if (node == nullptr || node->surface == nullptr || point.u == 0 || point.v == 0 ||
+            point.u + 1 >= node->surface->u_count() ||
+            point.v + 1 >= node->surface->v_count()) {
+            continue;
+        }
+        if (contains({point.entity, point.u - 1, point.v}) &&
+            contains({point.entity, point.u + 1, point.v}) &&
+            contains({point.entity, point.u, point.v - 1}) &&
+            contains({point.entity, point.u, point.v + 1})) {
+            shrunk.push_back(point);
+        }
+    }
+    return select_control_points(std::move(shrunk));
 }
 
 bool EditorSession::clear_selection() {
@@ -536,14 +689,22 @@ std::expected<bool, SceneMutationError> EditorSession::set_entity_visibility(
 bool EditorSession::begin_control_point_edit(ControlPointField field) {
     NotificationBatch notifications(*this);
     (void)cancel_pending_edit();
-    const ControlPointSelection* selection = m_selection.control_point();
-    const ControlPoint* point = selected_control_point();
-    if (selection != nullptr && point != nullptr) {
-        m_pending_edit = PendingEdit{*selection, field, field_value(*point, field)};
-        notify(EditorChange{.history = true});
-        return true;
+    const std::span selections = m_selection.control_points();
+    if (selections.empty()) {
+        return false;
     }
-    return false;
+    PendingEdit edit{{selections.begin(), selections.end()}, field, {}};
+    edit.initial_values.reserve(selections.size());
+    for (const ControlPointSelection selection : selections) {
+        const ControlPoint* point = m_scene.resolve(selection);
+        if (point == nullptr) {
+            return false;
+        }
+        edit.initial_values.push_back(field_value(*point, field));
+    }
+    m_pending_edit = std::move(edit);
+    notify(EditorChange{.history = true});
+    return true;
 }
 
 bool EditorSession::preview_control_point_edit(ControlPointField field, double value) {
@@ -552,18 +713,12 @@ bool EditorSession::preview_control_point_edit(ControlPointField field, double v
         return false;
     }
 
-    const ControlPointSelection* selection = m_selection.control_point();
-    const ControlPoint* point = selected_control_point();
-    if (selection == nullptr || point == nullptr ||
-        selection->entity != m_pending_edit->selection.entity ||
-        selection->u != m_pending_edit->selection.u ||
-        selection->v != m_pending_edit->selection.v) {
+    const std::span selections = m_selection.control_points();
+    if (!std::ranges::equal(selections, m_pending_edit->selections)) {
         return false;
     }
-
-    ControlPoint updated = *point;
-    set_field_value(updated, field, value);
-    if (!m_scene.set_control_point(*selection, updated).has_value()) {
+    const std::vector<double> values(selections.size(), value);
+    if (!apply_field_values(m_scene, m_pending_edit->selections, field, values)) {
         (void)cancel_pending_edit();
         return false;
     }
@@ -580,31 +735,29 @@ void EditorSession::finish_control_point_edit(ControlPointField field) {
 
     const PendingEdit edit = *m_pending_edit;
     m_pending_edit.reset();
-    const ControlPoint* point = m_scene.resolve(edit.selection);
-    if (point == nullptr) {
-        notify(EditorChange{.history = true});
-        return;
+    std::vector<double> final_values;
+    final_values.reserve(edit.selections.size());
+    for (const ControlPointSelection selection : edit.selections) {
+        const ControlPoint* point = m_scene.resolve(selection);
+        if (point == nullptr) {
+            notify(EditorChange{.history = true});
+            return;
+        }
+        final_values.push_back(field_value(*point, field));
     }
-
-    const double final_value = field_value(*point, field);
-    if (final_value == edit.initial_value) {
+    if (final_values == edit.initial_values) {
         notify(EditorChange{.history = true});
         return;
     }
 
     Scene* scene = &m_scene;
-    m_history.record_applied(std::make_unique<AppliedValueCommand>(
+    m_history.record_applied(std::make_unique<AppliedValuesCommand>(
         std::string(field_description(field)),
-        [scene, selection = edit.selection, field](double value) {
-            if (const ControlPoint* selected = scene->resolve(selection)) {
-                ControlPoint updated = *selected;
-                set_field_value(updated, field, value);
-                return scene->set_control_point(selection, updated).has_value();
-            }
-            return false;
+        [scene, selections = edit.selections, field](const std::vector<double>& values) {
+            return apply_field_values(*scene, selections, field, values);
         },
-        edit.initial_value,
-        final_value
+        edit.initial_values,
+        std::move(final_values)
     ));
     notify(EditorChange{.history = true});
 }
@@ -616,12 +769,23 @@ bool EditorSession::cancel_pending_edit() {
 
     const PendingEdit edit = *m_pending_edit;
     m_pending_edit.reset();
-    const ControlPoint* point = m_scene.resolve(edit.selection);
-    if (point != nullptr && field_value(*point, edit.field) != edit.initial_value) {
-        ControlPoint updated = *point;
-        set_field_value(updated, edit.field, edit.initial_value);
-        const auto restored = m_scene.set_control_point(edit.selection, updated);
-        const bool changed = restored.has_value() && *restored;
+    std::vector<double> current_values;
+    current_values.reserve(edit.selections.size());
+    for (const ControlPointSelection selection : edit.selections) {
+        const ControlPoint* point = m_scene.resolve(selection);
+        if (point == nullptr) {
+            notify(EditorChange{.history = true});
+            return false;
+        }
+        current_values.push_back(field_value(*point, edit.field));
+    }
+    if (current_values != edit.initial_values) {
+        const bool changed = apply_field_values(
+            m_scene,
+            edit.selections,
+            edit.field,
+            edit.initial_values
+        );
         notify(EditorChange{
             .geometry = changed,
             .properties = changed,
@@ -637,10 +801,14 @@ bool EditorSession::pending_edit_has_preview() const {
     if (!m_pending_edit.has_value()) {
         return false;
     }
-
-    const ControlPoint* point = m_scene.resolve(m_pending_edit->selection);
-    return point != nullptr &&
-        field_value(*point, m_pending_edit->field) != m_pending_edit->initial_value;
+    for (std::size_t index = 0; index < m_pending_edit->selections.size(); ++index) {
+        const ControlPoint* point = m_scene.resolve(m_pending_edit->selections[index]);
+        if (point == nullptr || field_value(*point, m_pending_edit->field) !=
+            m_pending_edit->initial_values[index]) {
+            return true;
+        }
+    }
+    return false;
 }
 
 const ControlPoint* EditorSession::selected_control_point() const {
@@ -673,8 +841,7 @@ void EditorSession::set_hovered_entity(std::optional<EntityId> entity) {
 }
 
 void EditorSession::clear_selection_for_entity(EntityId id) {
-    if (selection_references_entity(m_selection.current(), id)) {
-        m_selection.clear();
+    if (m_selection.remove_entity(id)) {
         notify(EditorChange{.selection = true});
     }
 }

@@ -119,6 +119,76 @@ void test_mode_switch_cancels_preview() {
     expect(!session.can_undo(), "canceled preview creates no history entry");
 }
 
+void test_multi_selection_operations() {
+    EditorSession session;
+    const EntityId entity = session.scene().nodes().front().id;
+    (void)session.set_selection_mode(EditorSession::SelectionMode::control_point);
+    const ControlPointSelection first{entity, 0, 0};
+    const ControlPointSelection second{entity, 1, 1};
+    const ControlPointSelection third{entity, 2, 2};
+    expect(session.select_control_point(first), "replace control-point selection");
+    expect(
+        session.select_control_point(second, EditorSession::SelectionOperation::add),
+        "add control point with Shift semantics"
+    );
+    expect(session.selection().control_points().size() == 2, "two points are selected");
+    expect(
+        session.select_control_point(first, EditorSession::SelectionOperation::toggle),
+        "toggle selected point with Ctrl semantics"
+    );
+    expect(
+        session.selection().control_points().size() == 1 &&
+            session.selection().control_point() != nullptr &&
+            *session.selection().control_point() == second,
+        "toggle removes an existing point"
+    );
+    expect(
+        session.select_control_point(third, EditorSession::SelectionOperation::toggle),
+        "toggle adds an unselected point"
+    );
+    expect(session.selection().control_points().size() == 2, "toggle adds to selection");
+
+    expect(session.select_control_point_row(), "select primary control-point row");
+    expect(session.selection().control_points().size() == 3, "row selects all V points");
+    expect(session.select_control_point_column(), "select primary control-point column");
+    expect(session.selection().control_points().size() == 3, "column selects all U points");
+    expect(session.select_all_control_points(), "select all control points");
+    expect(session.selection().control_points().size() == 9, "select all covers control net");
+    expect(session.shrink_control_point_selection(), "shrink full control net");
+    expect(session.selection().control_points().size() == 1, "shrink keeps interior point");
+    expect(session.grow_control_point_selection(), "grow center control point");
+    expect(session.selection().control_points().size() == 5, "grow adds orthogonal neighbors");
+}
+
+void test_multi_point_edit_is_atomic() {
+    EditorSession session;
+    const EntityId entity = session.scene().nodes().front().id;
+    (void)session.set_selection_mode(EditorSession::SelectionMode::control_point);
+    const ControlPointSelection first{entity, 0, 0};
+    const ControlPointSelection second{entity, 1, 1};
+    expect(session.select_control_points({first, second}), "select points for atomic edit");
+    const double first_initial = session.scene().resolve(first)->position.x;
+    const double second_initial = session.scene().resolve(second)->position.x;
+    expect(
+        session.begin_control_point_edit(EditorSession::ControlPointField::position_x),
+        "begin multi-point edit"
+    );
+    expect(
+        session.preview_control_point_edit(EditorSession::ControlPointField::position_x, 7.25),
+        "preview multi-point edit"
+    );
+    session.finish_control_point_edit(EditorSession::ControlPointField::position_x);
+    expect(session.scene().resolve(first)->position.x == 7.25, "edit changes first point");
+    expect(session.scene().resolve(second)->position.x == 7.25, "edit changes second point");
+    expect(session.undo_description() == "Edit X Position", "multi-point edit has one name");
+    expect(session.undo(), "undo multi-point edit once");
+    expect(session.scene().resolve(first)->position.x == first_initial, "undo restores first point");
+    expect(session.scene().resolve(second)->position.x == second_initial, "undo restores second point");
+    expect(session.redo(), "redo multi-point edit once");
+    expect(session.scene().resolve(first)->position.x == 7.25, "redo changes first point");
+    expect(session.scene().resolve(second)->position.x == 7.25, "redo changes second point");
+}
+
 void test_replace_document_clears_transient_state() {
     EditorSession session;
     const EntityId old_id = session.scene().nodes().front().id;
@@ -154,6 +224,8 @@ int main() {
     test_commit_pending_edit();
     test_selection_modes();
     test_mode_switch_cancels_preview();
+    test_multi_selection_operations();
+    test_multi_point_edit_is_atomic();
     test_replace_document_clears_transient_state();
     test_new_blank_document();
 

@@ -45,12 +45,16 @@ public:
 class ControlPointSelectionTool final : public IInputTool {
 public:
     using EnabledHandler = std::move_only_function<bool()>;
-    using SelectionHandler = std::move_only_function<void(ControlPointSelection)>;
+    using SelectionHandler =
+        std::move_only_function<void(ControlPointSelection, ModifierKeys)>;
+    using RectangleHandler =
+        std::move_only_function<void(std::vector<ControlPointSelection>, ModifierKeys)>;
     using ClearHandler = std::move_only_function<void()>;
 
     explicit ControlPointSelectionTool(
         EnabledHandler enabled,
         SelectionHandler on_selection,
+        RectangleHandler on_rectangle,
         ClearHandler on_clear = {},
         float hit_radius = 12.0f
     );
@@ -64,8 +68,11 @@ public:
 private:
     EnabledHandler m_enabled;
     SelectionHandler m_on_selection;
+    RectangleHandler m_on_rectangle;
     ClearHandler m_on_clear;
     float m_hit_radius{12.0f};
+    Vec2 m_press_position{};
+    bool m_selecting{false};
 };
 
 class SurfaceSelectionTool final : public IInputTool {

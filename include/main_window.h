@@ -58,6 +58,11 @@ private:
     QAction* m_redo_action{nullptr};
     QAction* m_object_mode_action{nullptr};
     QAction* m_control_point_mode_action{nullptr};
+    QAction* m_select_all_points_action{nullptr};
+    QAction* m_select_point_row_action{nullptr};
+    QAction* m_select_point_column_action{nullptr};
+    QAction* m_grow_point_selection_action{nullptr};
+    QAction* m_shrink_point_selection_action{nullptr};
     QAction* m_create_surface_action{nullptr};
     QAction* m_delete_entity_action{nullptr};
     QAction* m_rename_entity_action{nullptr};

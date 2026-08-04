@@ -9,6 +9,8 @@
 #include <QVBoxLayout>
 
 #include <array>
+#include <ranges>
+#include <span>
 
 namespace {
 
@@ -24,6 +26,41 @@ constexpr std::array field_labels = {
     "Position Y",
     "Position Z",
     "Weight W"
+};
+
+class MixedValueSpinBox final : public QDoubleSpinBox {
+public:
+    explicit MixedValueSpinBox(QWidget* parent) : QDoubleSpinBox(parent) {}
+
+    void set_mixed(bool mixed, double common_value) {
+        m_mixed = mixed;
+        setSpecialValueText(mixed ? "Multiple" : QString());
+        setButtonSymbols(mixed ? QAbstractSpinBox::NoButtons : QAbstractSpinBox::UpDownArrows);
+        setValue(mixed ? minimum() : common_value);
+    }
+
+    void accept_explicit_value() {
+        if (!m_mixed) {
+            return;
+        }
+        m_mixed = false;
+        setSpecialValueText({});
+        setButtonSymbols(QAbstractSpinBox::UpDownArrows);
+    }
+
+protected:
+    [[nodiscard]] StepEnabled stepEnabled() const override {
+        return m_mixed ? StepNone : QDoubleSpinBox::stepEnabled();
+    }
+
+    void stepBy(int steps) override {
+        if (!m_mixed) {
+            QDoubleSpinBox::stepBy(steps);
+        }
+    }
+
+private:
+    bool m_mixed{false};
 };
 
 } // namespace
@@ -67,7 +104,7 @@ ControlPointInspectorWidget::ControlPointInspectorWidget(
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     for (std::size_t index = 0; index < m_fields.size(); ++index) {
-        auto* field = new QDoubleSpinBox(m_control_point_fields_widget);
+        auto* field = new MixedValueSpinBox(m_control_point_fields_widget);
         field->setDecimals(6);
         field->setSingleStep(0.1);
         field->setAccelerated(true);
@@ -110,7 +147,10 @@ void ControlPointInspectorWidget::refresh() {
         : std::optional{entity->id};
     m_entity_fields_widget->setVisible(entity != nullptr);
 
-    const ControlPointSelection* point_selection = m_session.selection().control_point();
+    const std::span point_selections = m_session.selection().control_points();
+    const ControlPointSelection* point_selection = point_selections.empty()
+        ? nullptr
+        : &point_selections.back();
     const ControlPoint* point = m_session.selected_control_point();
     const bool has_control_point = point_selection != nullptr && point != nullptr;
     m_control_point_fields_widget->setVisible(has_control_point);
@@ -141,10 +181,14 @@ void ControlPointInspectorWidget::refresh() {
     const QString owner_name = owner == nullptr
         ? QString("Unknown entity")
         : QString::fromStdString(owner->name);
-    m_selection_label->setText(QString("%1 / Control vertex U%2 : V%3")
-        .arg(owner_name)
-        .arg(static_cast<qulonglong>(point_selection->u))
-        .arg(static_cast<qulonglong>(point_selection->v)));
+    m_selection_label->setText(point_selections.size() == 1
+        ? QString("%1 / Control vertex U%2 : V%3")
+            .arg(owner_name)
+            .arg(static_cast<qulonglong>(point_selection->u))
+            .arg(static_cast<qulonglong>(point_selection->v))
+        : QString("%1 control points selected").arg(
+            static_cast<qulonglong>(point_selections.size())
+        ));
 
     const std::array values = {
         point->position.x,
@@ -154,7 +198,24 @@ void ControlPointInspectorWidget::refresh() {
     };
     for (std::size_t index = 0; index < m_fields.size(); ++index) {
         const QSignalBlocker blocker(m_fields[index]);
-        m_fields[index]->setValue(values[index]);
+        const bool mixed = std::ranges::any_of(
+            point_selections,
+            [this, index, expected = values[index]](ControlPointSelection selection) {
+                const ControlPoint* selected = m_session.scene().resolve(selection);
+                if (selected == nullptr) {
+                    return true;
+                }
+                const std::array selected_values = {
+                    selected->position.x,
+                    selected->position.y,
+                    selected->position.z,
+                    selected->weight
+                };
+                return selected_values[index] != expected;
+            }
+        );
+        m_fields[index]->setToolTip(mixed ? "Multiple values" : QString());
+        static_cast<MixedValueSpinBox*>(m_fields[index])->set_mixed(mixed, values[index]);
     }
 }
 
@@ -180,6 +241,7 @@ void ControlPointInspectorWidget::entity_visibility_changed(bool visible) {
 }
 
 void ControlPointInspectorWidget::value_changed(std::size_t field_index, double value) {
+    static_cast<MixedValueSpinBox*>(m_fields[field_index])->accept_explicit_value();
     if (!m_editing[field_index]) {
         if (!m_session.begin_control_point_edit(fields[field_index])) {
             refresh();

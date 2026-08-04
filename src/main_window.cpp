@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -108,6 +109,28 @@ MainWindow::MainWindow(QWidget* parent)
     m_redo_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::Redo));
     connect(m_redo_action, &QAction::triggered, this, [this] { redo(); });
 
+    m_select_all_points_action = new QAction("Select All Control Points", this);
+    m_select_all_points_action->setShortcuts(QKeySequence::keyBindings(QKeySequence::SelectAll));
+    connect(m_select_all_points_action, &QAction::triggered, this, [this] {
+        (void)m_session.select_all_control_points();
+    });
+    m_select_point_row_action = new QAction("Select Control Point Row", this);
+    connect(m_select_point_row_action, &QAction::triggered, this, [this] {
+        (void)m_session.select_control_point_row();
+    });
+    m_select_point_column_action = new QAction("Select Control Point Column", this);
+    connect(m_select_point_column_action, &QAction::triggered, this, [this] {
+        (void)m_session.select_control_point_column();
+    });
+    m_grow_point_selection_action = new QAction("Grow Control Point Selection", this);
+    connect(m_grow_point_selection_action, &QAction::triggered, this, [this] {
+        (void)m_session.grow_control_point_selection();
+    });
+    m_shrink_point_selection_action = new QAction("Shrink Control Point Selection", this);
+    connect(m_shrink_point_selection_action, &QAction::triggered, this, [this] {
+        (void)m_session.shrink_control_point_selection();
+    });
+
     m_object_mode_action = new QAction("Object", this);
     m_object_mode_action->setCheckable(true);
     m_object_mode_action->setChecked(true);
@@ -175,6 +198,12 @@ MainWindow::MainWindow(QWidget* parent)
     auto* edit_menu = menuBar()->addMenu("Edit");
     edit_menu->addAction(m_undo_action);
     edit_menu->addAction(m_redo_action);
+    edit_menu->addSeparator();
+    edit_menu->addAction(m_select_all_points_action);
+    edit_menu->addAction(m_select_point_row_action);
+    edit_menu->addAction(m_select_point_column_action);
+    edit_menu->addAction(m_grow_point_selection_action);
+    edit_menu->addAction(m_shrink_point_selection_action);
     edit_menu->addSeparator();
     edit_menu->addAction(m_rename_entity_action);
     edit_menu->addAction(m_toggle_visibility_action);
@@ -472,6 +501,12 @@ void MainWindow::refresh_ui_state() {
     m_object_mode_action->setChecked(object_mode);
     m_control_point_mode_action->setChecked(!object_mode);
     m_mode_status->setText(object_mode ? "Mode: Object" : "Mode: Control Points");
+    const bool has_point = m_session.selection().control_point() != nullptr;
+    m_select_all_points_action->setEnabled(!object_mode && selected_entity_id().has_value());
+    m_select_point_row_action->setEnabled(!object_mode && has_point);
+    m_select_point_column_action->setEnabled(!object_mode && has_point);
+    m_grow_point_selection_action->setEnabled(!object_mode && has_point);
+    m_shrink_point_selection_action->setEnabled(!object_mode && has_point);
 
     m_undo_action->setEnabled(m_session.can_undo());
     m_redo_action->setEnabled(m_session.can_redo());
@@ -497,16 +532,21 @@ void MainWindow::refresh_ui_state() {
         has_entity && !selected_node->visible ? "Show" : "Hide"
     );
 
-    const ControlPointSelection* selection = m_session.selection().control_point();
-    if (selection != nullptr) {
-        const SceneNode* node = m_session.scene().find_entity(selection->entity);
+    const std::span selected_points = m_session.selection().control_points();
+    if (!selected_points.empty()) {
+        const ControlPointSelection& primary = selected_points.back();
+        const SceneNode* node = m_session.scene().find_entity(primary.entity);
         const QString name = node == nullptr
             ? QString("Unknown entity")
             : QString::fromStdString(node->name);
-        m_selection_status->setText(QString("%1 / Control vertex U%2 : V%3")
-            .arg(name)
-            .arg(static_cast<qulonglong>(selection->u))
-            .arg(static_cast<qulonglong>(selection->v)));
+        m_selection_status->setText(selected_points.size() == 1
+            ? QString("%1 / Control vertex U%2 : V%3")
+                .arg(name)
+                .arg(static_cast<qulonglong>(primary.u))
+                .arg(static_cast<qulonglong>(primary.v))
+            : QString("%1 control points selected").arg(
+                static_cast<qulonglong>(selected_points.size())
+            ));
         return;
     }
 
@@ -523,13 +563,7 @@ void MainWindow::refresh_ui_state() {
 }
 
 std::optional<EntityId> MainWindow::selected_entity_id() const {
-    if (const EntitySelection* entity = m_session.selection().entity()) {
-        return entity->entity;
-    }
-    if (const ControlPointSelection* point = m_session.selection().control_point()) {
-        return point->entity;
-    }
-    return std::nullopt;
+    return m_session.selected_entity_id();
 }
 
 std::string MainWindow::suggested_surface_name() const {

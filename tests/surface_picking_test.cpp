@@ -126,12 +126,52 @@ void test_hover_and_selection_cycling() {
     expect(!hovered.has_value(), "empty space clears hover");
 }
 
+void test_control_point_rectangle_selection() {
+    Scene scene;
+    expect(scene.add_entity(EntityId{5}, "Grid", true, make_plane(0.0)).has_value(),
+        "add rectangle-selection plane");
+    OrbitCameraController camera({0.0, 0.0, 10.0}, {0.0, 0.0, 0.0});
+    std::vector<ControlPointSelection> rectangle_selection;
+    ModifierKeys rectangle_modifiers;
+    ControlPointSelectionTool tool(
+        [] { return true; },
+        [](ControlPointSelection, ModifierKeys) {},
+        [&rectangle_selection, &rectangle_modifiers](
+            std::vector<ControlPointSelection> selections,
+            ModifierKeys modifiers
+        ) {
+            rectangle_selection = std::move(selections);
+            rectangle_modifiers = modifiers;
+        }
+    );
+    InputFrameSnapshot press{
+        .mouse_position = {150.0f, 75.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .left_mouse_pressed = true,
+        .modifiers = {.shift = true}
+    };
+    tool.process_input(press, camera, scene);
+    InputFrameSnapshot release{
+        .mouse_position = {650.0f, 525.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse_released = true,
+        .modifiers = {.shift = true}
+    };
+    tool.process_input(release, camera, scene);
+    expect(rectangle_selection.size() == 4, "rectangle selects every enclosed control point");
+    expect(rectangle_modifiers.shift, "rectangle preserves additive modifier");
+}
+
 } // namespace
 
 int main() {
     test_viewport_ray();
     test_nearest_and_hidden_surface_picking();
     test_hover_and_selection_cycling();
+    test_control_point_rectangle_selection();
 
     if (failures != 0) {
         std::cerr << failures << " surface picking test(s) failed\n";

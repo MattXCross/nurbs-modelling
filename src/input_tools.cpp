@@ -64,11 +64,13 @@ Vec2 project_to_viewport(
 ControlPointSelectionTool::ControlPointSelectionTool(
     EnabledHandler enabled,
     SelectionHandler on_selection,
+    RectangleHandler on_rectangle,
     ClearHandler on_clear,
     float hit_radius
 )
     : m_enabled(std::move(enabled)),
       m_on_selection(std::move(on_selection)),
+      m_on_rectangle(std::move(on_rectangle)),
       m_on_clear(std::move(on_clear)),
        m_hit_radius(std::max(0.0f, hit_radius)) {}
 
@@ -140,11 +142,64 @@ void ControlPointSelectionTool::process_input(
     OrbitCameraController& camera_controller,
     Scene& scene
 ) {
-    if (!m_enabled || !m_enabled() || !input.left_mouse_pressed) {
+    if (!m_enabled || !m_enabled()) {
+        m_selecting = false;
         return;
     }
 
+    if (input.left_mouse_pressed) {
+        m_press_position = input.mouse_position;
+        m_selecting = true;
+        return;
+    }
+    if (!input.left_mouse_released || !m_selecting) {
+        return;
+    }
+    m_selecting = false;
+
     if (input.screen_width <= 0 || input.screen_height <= 0) {
+        return;
+    }
+
+    const float drag_x = input.mouse_position.x - m_press_position.x;
+    const float drag_y = input.mouse_position.y - m_press_position.y;
+    if (drag_x * drag_x + drag_y * drag_y > 16.0f) {
+        const float minimum_x = std::min(m_press_position.x, input.mouse_position.x);
+        const float minimum_y = std::min(m_press_position.y, input.mouse_position.y);
+        const Rect rectangle{
+            minimum_x,
+            minimum_y,
+            std::abs(drag_x),
+            std::abs(drag_y)
+        };
+        std::vector<ControlPointSelection> selected_points;
+        const CameraState& camera = camera_controller.camera();
+        const cad::Vector3 camera_forward = cad::normalized(
+            at_render_precision(camera.target) - at_render_precision(camera.position)
+        ).value_or(cad::Vector3{});
+        for (const SceneNode& node : scene.nodes()) {
+            if (!node.visible || node.surface == nullptr) {
+                continue;
+            }
+            const auto net = node.surface->control_net_2d();
+            for (std::size_t u = 0; u < net.extent(0); ++u) {
+                for (std::size_t v = 0; v < net.extent(1); ++v) {
+                    const cad::Point3 position = at_render_precision(net[u, v].position);
+                    if (cad::dot(position - at_render_precision(camera.position), camera_forward) > 0.0 &&
+                        rectangle.contains(project_to_viewport(
+                            position,
+                            camera,
+                            input.screen_width,
+                            input.screen_height
+                        ))) {
+                        selected_points.push_back(ControlPointSelection{node.id, u, v});
+                    }
+                }
+            }
+        }
+        if (m_on_rectangle) {
+            m_on_rectangle(std::move(selected_points), input.modifiers);
+        }
         return;
     }
 
@@ -204,9 +259,9 @@ void ControlPointSelectionTool::process_input(
 
     if (selected_point.has_value()) {
         if (m_on_selection) {
-            m_on_selection(*selected_point);
+            m_on_selection(*selected_point, input.modifiers);
         }
-    } else if (m_on_clear) {
+    } else if (!input.modifiers.shift && !input.modifiers.ctrl && m_on_clear) {
         m_on_clear();
     }
 }
