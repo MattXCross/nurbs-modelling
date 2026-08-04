@@ -73,11 +73,12 @@ void draw_control_net(
 }
 
 void draw_translation_gizmo(
-    cad::Point3 pivot,
+    const TransformFrame& frame,
     const CameraState& camera,
     std::optional<TranslationConstraint> active_constraint,
     int framebuffer_height
 ) {
+    const cad::Point3 pivot = frame.pivot;
     if (framebuffer_height <= 0) {
         return;
     }
@@ -98,9 +99,9 @@ void draw_translation_gizmo(
         active_constraint == TranslationConstraint::screen ? active_color : LIGHTGRAY
     );
     for (const auto& [constraint, axis, color] : {
-             std::tuple{TranslationConstraint::x, cad::Vector3{1.0, 0.0, 0.0}, RED},
-             std::tuple{TranslationConstraint::y, cad::Vector3{0.0, 1.0, 0.0}, GREEN},
-             std::tuple{TranslationConstraint::z, cad::Vector3{0.0, 0.0, 1.0}, BLUE}
+             std::tuple{TranslationConstraint::x, frame.x, RED},
+             std::tuple{TranslationConstraint::y, frame.y, GREEN},
+             std::tuple{TranslationConstraint::z, frame.z, BLUE}
          }) {
         const Color handle_color = active_constraint == constraint ? active_color : color;
         DrawCylinderEx(
@@ -121,9 +122,9 @@ void draw_translation_gizmo(
         );
     }
     for (const auto& [constraint, first, second, color] : {
-             std::tuple{TranslationConstraint::xy, cad::Vector3{1, 0, 0}, cad::Vector3{0, 1, 0}, Fade(YELLOW, 0.65f)},
-             std::tuple{TranslationConstraint::xz, cad::Vector3{1, 0, 0}, cad::Vector3{0, 0, 1}, Fade(MAGENTA, 0.65f)},
-             std::tuple{TranslationConstraint::yz, cad::Vector3{0, 1, 0}, cad::Vector3{0, 0, 1}, Fade(SKYBLUE, 0.65f)}
+             std::tuple{TranslationConstraint::xy, frame.x, frame.y, Fade(YELLOW, 0.65f)},
+             std::tuple{TranslationConstraint::xz, frame.x, frame.z, Fade(MAGENTA, 0.65f)},
+             std::tuple{TranslationConstraint::yz, frame.y, frame.z, Fade(SKYBLUE, 0.65f)}
          }) {
         const Color handle_color = active_constraint == constraint
             ? active_color
@@ -133,6 +134,103 @@ void draw_translation_gizmo(
         const Vector3 c = endpoint(second * 0.18, 1.0);
         DrawTriangle3D(a, b, c, handle_color);
         DrawTriangle3D(c, b, a, handle_color);
+    }
+}
+
+std::pair<cad::Vector3, cad::Vector3> ring_basis(cad::Vector3 normal) {
+    const cad::Vector3 reference = std::abs(normal.y) < 0.9
+        ? cad::Vector3{0.0, 1.0, 0.0}
+        : cad::Vector3{1.0, 0.0, 0.0};
+    const cad::Vector3 first = cad::normalized(cad::cross(normal, reference))
+        .value_or(cad::Vector3{1.0, 0.0, 0.0});
+    return {first, cad::cross(normal, first)};
+}
+
+void draw_ring(cad::Point3 pivot, cad::Vector3 normal, double radius, Color color) {
+    const auto [first, second] = ring_basis(normal);
+    constexpr std::size_t segments = 64;
+    cad::Point3 previous = pivot + first * radius;
+    for (std::size_t index = 1; index <= segments; ++index) {
+        const double angle = 2.0 * std::numbers::pi * static_cast<double>(index) /
+            static_cast<double>(segments);
+        const cad::Point3 current = pivot +
+            (first * std::cos(angle) + second * std::sin(angle)) * radius;
+        DrawLine3D(to_raylib(previous), to_raylib(current), color);
+        previous = current;
+    }
+}
+
+double gizmo_scale(cad::Point3 pivot, const CameraState& camera, int framebuffer_height) {
+    return cad::distance(camera.position, pivot) * 2.0 * std::tan(
+        static_cast<double>(camera.vertical_fov_degrees) * std::numbers::pi / 360.0
+    ) * 80.0 / static_cast<double>(framebuffer_height);
+}
+
+void draw_rotation_gizmo(
+    const TransformFrame& frame,
+    const CameraState& camera,
+    std::optional<RotationConstraint> active_constraint,
+    int framebuffer_height
+) {
+    const cad::Point3 pivot = frame.pivot;
+    const double scale = gizmo_scale(pivot, camera, framebuffer_height);
+    const auto screen_axis = cad::normalized(camera.target - camera.position);
+    if (!screen_axis || !std::isfinite(scale) || scale <= 0.0) {
+        return;
+    }
+    const Color active = YELLOW;
+    draw_ring(pivot, frame.x, scale,
+        active_constraint == RotationConstraint::x ? active : RED);
+    draw_ring(pivot, frame.y, scale,
+        active_constraint == RotationConstraint::y ? active : GREEN);
+    draw_ring(pivot, frame.z, scale,
+        active_constraint == RotationConstraint::z ? active : BLUE);
+    draw_ring(pivot, *screen_axis, scale * 1.18,
+        active_constraint == RotationConstraint::screen ? active : LIGHTGRAY);
+}
+
+void draw_scale_gizmo(
+    const TransformFrame& frame,
+    const CameraState& camera,
+    std::optional<ScaleConstraint> active_constraint,
+    int framebuffer_height
+) {
+    const cad::Point3 pivot = frame.pivot;
+    const double scale = gizmo_scale(pivot, camera, framebuffer_height);
+    if (!std::isfinite(scale) || scale <= 0.0) {
+        return;
+    }
+    const Color active = YELLOW;
+    const Vector3 center = to_raylib(pivot);
+    DrawCube(
+        center,
+        static_cast<float>(scale * 0.14),
+        static_cast<float>(scale * 0.14),
+        static_cast<float>(scale * 0.14),
+        active_constraint == ScaleConstraint::uniform ? active : LIGHTGRAY
+    );
+    for (const auto& [constraint, axis, color] : {
+             std::tuple{ScaleConstraint::x, frame.x, RED},
+             std::tuple{ScaleConstraint::y, frame.y, GREEN},
+             std::tuple{ScaleConstraint::z, frame.z, BLUE}
+         }) {
+        const Color handle = active_constraint == constraint ? active : color;
+        const Vector3 end = to_raylib(pivot + axis * scale);
+        DrawCylinderEx(
+            center,
+            end,
+            static_cast<float>(scale * 0.025),
+            static_cast<float>(scale * 0.025),
+            8,
+            handle
+        );
+        DrawCube(
+            end,
+            static_cast<float>(scale * 0.13),
+            static_cast<float>(scale * 0.13),
+            static_cast<float>(scale * 0.13),
+            handle
+        );
     }
 }
 
@@ -146,8 +244,11 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
-        std::optional<cad::Point3> translation_pivot,
+        std::optional<TransformFrame> transform_frame,
+        TransformMode transform_mode,
         std::optional<TranslationConstraint> active_translation_constraint,
+        std::optional<RotationConstraint> active_rotation_constraint,
+        std::optional<ScaleConstraint> active_scale_constraint,
         int framebuffer_width,
         int framebuffer_height
     ) {
@@ -196,13 +297,33 @@ public:
                 );
             }
         }
-        if (translation_pivot) {
-            draw_translation_gizmo(
-                *translation_pivot,
-                camera,
-                active_translation_constraint,
-                framebuffer_height
-            );
+        if (transform_frame) {
+            switch (transform_mode) {
+                case TransformMode::translate:
+                    draw_translation_gizmo(
+                        *transform_frame,
+                        camera,
+                        active_translation_constraint,
+                        framebuffer_height
+                    );
+                    break;
+                case TransformMode::rotate:
+                    draw_rotation_gizmo(
+                        *transform_frame,
+                        camera,
+                        active_rotation_constraint,
+                        framebuffer_height
+                    );
+                    break;
+                case TransformMode::scale:
+                    draw_scale_gizmo(
+                        *transform_frame,
+                        camera,
+                        active_scale_constraint,
+                        framebuffer_height
+                    );
+                    break;
+            }
         }
         rlDrawRenderBatchActive();
         rlDisableDepthTest();
@@ -292,8 +413,11 @@ void RaylibViewportRenderer::render(
     std::span<const ControlPointSelection> selected_points,
     std::optional<EntityId> selected_entity,
     std::optional<EntityId> hovered_entity,
-    std::optional<cad::Point3> translation_pivot,
+    std::optional<TransformFrame> transform_frame,
+    TransformMode transform_mode,
     std::optional<TranslationConstraint> active_translation_constraint,
+    std::optional<RotationConstraint> active_rotation_constraint,
+    std::optional<ScaleConstraint> active_scale_constraint,
     int framebuffer_width,
     int framebuffer_height
 ) {
@@ -303,8 +427,11 @@ void RaylibViewportRenderer::render(
         selected_points,
         selected_entity,
         hovered_entity,
-        translation_pivot,
+        transform_frame,
+        transform_mode,
         active_translation_constraint,
+        active_rotation_constraint,
+        active_scale_constraint,
         framebuffer_width,
         framebuffer_height
     );

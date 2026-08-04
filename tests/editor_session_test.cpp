@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -251,6 +252,127 @@ void test_object_translation_and_invalid_delta() {
         "invalid translation leaves geometry unchanged");
 }
 
+void test_rotation_and_scale_transactions() {
+    EditorSession session;
+    Scene scene;
+    expect(scene.add_entity(EntityId{8}, "Transform Plane", true, make_surface()).has_value(),
+        "construct transform scene");
+    session.replace_document(std::move(scene));
+    const EntityId entity{8};
+    expect(session.select_entity(EntitySelection{entity}), "select transform object");
+    const ControlPointSelection corner{entity, 0, 0};
+    const Point3D initial = session.scene().resolve(corner)->position;
+    expect(
+        session.rotate_selection({0.0, 1.0, 0.0}, std::numbers::pi / 2.0),
+        "rotate object around Y"
+    );
+    const Point3D rotated = session.scene().resolve(corner)->position;
+    expect(std::abs(rotated.x - 0.0) < 1e-12, "rotation preserves expected X");
+    expect(std::abs(rotated.z - 1.0) < 1e-12, "rotation produces expected Z");
+    expect(session.undo_description() == "Rotate Selection", "rotation is named");
+    expect(session.undo(), "undo rotation");
+    expect(session.scene().resolve(corner)->position == initial, "rotation undo is exact");
+    expect(session.redo(), "redo rotation");
+    expect(session.undo(), "return to initial before scale");
+
+    (void)session.set_selection_mode(EditorSession::SelectionMode::control_point);
+    const ControlPointSelection primary{entity, 0, 0};
+    const ControlPointSelection other{entity, 1, 1};
+    expect(session.select_control_points({other, primary}), "select points with primary pivot");
+    expect(
+        session.set_pivot_mode(EditorSession::PivotMode::primary_control_point),
+        "use primary point pivot"
+    );
+    const Point3D primary_initial = session.scene().resolve(primary)->position;
+    const Point3D other_initial = session.scene().resolve(other)->position;
+    expect(
+        session.scale_selection(EditorSession::ScaleConstraint::uniform, 2.0),
+        "uniformly scale point selection"
+    );
+    expect(session.scene().resolve(primary)->position == primary_initial,
+        "primary pivot remains fixed while scaling");
+    expect(
+        session.scene().resolve(other)->position ==
+            primary_initial + (other_initial - primary_initial) * 2.0,
+        "uniform scale doubles offset from pivot"
+    );
+    expect(session.undo_description() == "Scale Selection", "scale is named");
+    expect(session.undo(), "undo scale");
+    expect(session.scene().resolve(other)->position == other_initial, "scale undo is exact");
+
+    expect(session.set_pivot_mode(EditorSession::PivotMode::world_origin), "use world pivot");
+    expect(session.selection_pivot() == cad::Point3{}, "world-origin pivot is exact");
+    expect(
+        session.scale_selection(EditorSession::ScaleConstraint::x, 3.0),
+        "axis-constrained scale"
+    );
+    expect(session.scene().resolve(other)->position.x == other_initial.x * 3.0,
+        "X scale changes only X offset");
+    expect(session.scene().resolve(other)->position.y == other_initial.y &&
+        session.scene().resolve(other)->position.z == other_initial.z,
+        "X scale preserves Y and Z");
+}
+
+void test_rotation_and_scale_cancel() {
+    EditorSession session;
+    const EntityId entity = session.scene().nodes().front().id;
+    (void)session.set_selection_mode(EditorSession::SelectionMode::control_point);
+    const ControlPointSelection point{entity, 0, 0};
+    expect(session.select_control_point(point), "select cancel-transform point");
+    const Point3D initial = session.scene().resolve(point)->position;
+    expect(session.begin_rotation(EditorSession::RotationConstraint::z, {0, 0, 1}),
+        "begin rotation preview");
+    expect(session.preview_rotation(0.75), "preview rotation");
+    expect(session.cancel_rotation(), "cancel rotation preview");
+    expect(session.scene().resolve(point)->position == initial, "rotation cancel is exact");
+    expect(session.begin_scale(EditorSession::ScaleConstraint::uniform), "begin scale preview");
+    expect(session.preview_scale(1.75), "preview scale");
+    expect(session.cancel_scale(), "cancel scale preview");
+    expect(session.scene().resolve(point)->position == initial, "scale cancel is exact");
+}
+
+void test_local_transform_frame() {
+    EditorSession session;
+    Scene scene;
+    expect(scene.add_entity(EntityId{12}, "Local Plane", true, make_surface()).has_value(),
+        "construct local-frame scene");
+    session.replace_document(std::move(scene));
+    expect(session.select_entity(EntitySelection{EntityId{12}}), "select local-frame object");
+    expect(
+        session.set_transform_orientation(EditorSession::TransformOrientation::local),
+        "switch to local transform orientation"
+    );
+    const auto frame = session.transform_frame();
+    expect(frame.has_value(), "derive local surface frame");
+    if (!frame) {
+        return;
+    }
+    expect(frame->x == cad::Vector3{1.0, 0.0, 0.0}, "local X follows surface U");
+    expect(frame->y == cad::Vector3{0.0, 0.0, 1.0}, "local Y follows surface V");
+    expect(frame->z == cad::Vector3{0.0, -1.0, 0.0}, "local Z completes right-handed frame");
+
+    const ControlPointSelection corner{EntityId{12}, 0, 0};
+    const Point3D initial = session.scene().resolve(corner)->position;
+    expect(
+        session.scale_selection(EditorSession::ScaleConstraint::y, 2.0),
+        "scale along local Y"
+    );
+    const Point3D scaled = session.scene().resolve(corner)->position;
+    expect(scaled.x == initial.x && scaled.y == initial.y, "local Y scale preserves world X/Y");
+    expect(scaled.z == -0.5, "local Y scale changes surface-V world coordinate");
+    expect(session.undo(), "undo local scale");
+    expect(session.scene().resolve(corner)->position == initial, "local scale undo is exact");
+
+    expect(
+        session.set_transform_orientation(EditorSession::TransformOrientation::world),
+        "switch back to world orientation"
+    );
+    const auto world = session.transform_frame();
+    expect(world && world->x == cad::Vector3{1, 0, 0} &&
+        world->y == cad::Vector3{0, 1, 0} && world->z == cad::Vector3{0, 0, 1},
+        "world orientation restores canonical axes");
+}
+
 void test_replace_document_clears_transient_state() {
     EditorSession session;
     const EntityId old_id = session.scene().nodes().front().id;
@@ -290,6 +412,9 @@ int main() {
     test_multi_point_edit_is_atomic();
     test_control_point_translation_transaction();
     test_object_translation_and_invalid_delta();
+    test_rotation_and_scale_transactions();
+    test_rotation_and_scale_cancel();
+    test_local_transform_frame();
     test_replace_document_clears_transient_state();
     test_new_blank_document();
 

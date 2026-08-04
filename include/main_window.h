@@ -40,6 +40,8 @@ private:
     void redo();
     void create_surface();
     void translate_selected_numeric();
+    void rotate_selected_numeric();
+    void scale_selected_numeric();
     void delete_selected_entity();
     void rename_selected_entity();
     void toggle_selected_entity_visibility();
@@ -66,6 +68,16 @@ private:
     QAction* m_shrink_point_selection_action{nullptr};
     QAction* m_create_surface_action{nullptr};
     QAction* m_translate_action{nullptr};
+    QAction* m_rotate_action{nullptr};
+    QAction* m_scale_action{nullptr};
+    QAction* m_translate_mode_action{nullptr};
+    QAction* m_rotate_mode_action{nullptr};
+    QAction* m_scale_mode_action{nullptr};
+    QAction* m_center_pivot_action{nullptr};
+    QAction* m_primary_pivot_action{nullptr};
+    QAction* m_origin_pivot_action{nullptr};
+    QAction* m_world_orientation_action{nullptr};
+    QAction* m_local_orientation_action{nullptr};
     QAction* m_delete_entity_action{nullptr};
     QAction* m_rename_entity_action{nullptr};
     QAction* m_toggle_visibility_action{nullptr};

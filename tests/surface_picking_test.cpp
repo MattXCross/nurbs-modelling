@@ -175,7 +175,7 @@ void test_translation_gizmo_screen_drag_and_cancel() {
     std::optional<TranslationConstraint> started_constraint;
     TranslationTool tool(
         [&active] { return active; },
-        [] { return std::optional{cad::Point3{0.0, 0.0, 0.0}}; },
+        [] { return std::optional{TransformFrame{.pivot = {0.0, 0.0, 0.0}}}; },
         [&active, &started_constraint](TranslationConstraint constraint) {
             active = true;
             started_constraint = constraint;
@@ -258,6 +258,126 @@ void test_translation_gizmo_screen_drag_and_cancel() {
     expect(canceled && !active && !finished, "Escape cancels gizmo drag");
 }
 
+void test_rotation_and_scale_gizmo_controls() {
+    Scene scene;
+    OrbitCameraController camera({0.0, 0.0, 10.0}, {0.0, 0.0, 0.0});
+    bool rotation_active = false;
+    std::optional<RotationConstraint> rotation_constraint;
+    std::optional<double> angle;
+    RotationTool rotation(
+        [&rotation_active] { return rotation_active; },
+        [] { return std::optional{TransformFrame{.pivot = {0, 0, 0}}}; },
+        [&rotation_active, &rotation_constraint](RotationConstraint constraint, cad::Vector3) {
+            rotation_active = true;
+            rotation_constraint = constraint;
+            return true;
+        },
+        [&angle](double value) { angle = value; return true; },
+        [&rotation_active] { rotation_active = false; },
+        [&rotation_active] { rotation_active = false; }
+    );
+    InputFrameSnapshot ring_press{
+        .mouse_position = {494.0f, 300.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .left_mouse_pressed = true,
+        .modifiers = {}
+    };
+    rotation.process_input(ring_press, camera, scene);
+    expect(rotation_constraint == RotationConstraint::screen,
+        "outer rotation ring selects camera-plane rotation");
+    InputFrameSnapshot ring_move{
+        .mouse_position = {400.0f, 394.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .modifiers = {.ctrl = true}
+    };
+    rotation.process_input(ring_move, camera, scene);
+    expect(angle && std::abs(*angle - std::numbers::pi / 2.0) < 1e-12,
+        "rotation ring drag snaps to 15-degree increments");
+
+    bool scale_active = false;
+    std::optional<ScaleConstraint> scale_constraint;
+    std::optional<double> factor;
+    ScaleTool scale(
+        [&scale_active] { return scale_active; },
+        [] { return std::optional{TransformFrame{.pivot = {0, 0, 0}}}; },
+        [&scale_active, &scale_constraint](ScaleConstraint constraint) {
+            scale_active = true;
+            scale_constraint = constraint;
+            return true;
+        },
+        [&factor](double value) { factor = value; return true; },
+        [&scale_active] { scale_active = false; },
+        [&scale_active] { scale_active = false; }
+    );
+    InputFrameSnapshot scale_press{
+        .mouse_position = {460.0f, 300.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .left_mouse_pressed = true,
+        .modifiers = {}
+    };
+    scale.process_input(scale_press, camera, scene);
+    expect(scale_constraint == ScaleConstraint::x, "box-ended X scale handle is pickable");
+    InputFrameSnapshot scale_move{
+        .mouse_position = {500.0f, 300.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .modifiers = {.ctrl = true}
+    };
+    scale.process_input(scale_move, camera, scene);
+    expect(factor && *factor == 1.5, "axis scale drag snaps factor to tenths");
+}
+
+void test_translation_uses_oriented_frame() {
+    Scene scene;
+    OrbitCameraController camera({0.0, 0.0, 10.0}, {0.0, 0.0, 0.0});
+    bool active = false;
+    std::optional<cad::Vector3> preview;
+    const TransformFrame frame{
+        .pivot = {0, 0, 0},
+        .x = {0, 1, 0},
+        .y = {1, 0, 0},
+        .z = {0, 0, -1}
+    };
+    TranslationTool tool(
+        [&active] { return active; },
+        [frame] { return std::optional{frame}; },
+        [&active](TranslationConstraint constraint) {
+            active = constraint == TranslationConstraint::x;
+            return active;
+        },
+        [&preview](cad::Vector3 delta) { preview = delta; return true; },
+        [&active] { active = false; },
+        [&active] { active = false; }
+    );
+    InputFrameSnapshot press{
+        .mouse_position = {400.0f, 240.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .left_mouse_pressed = true,
+        .modifiers = {}
+    };
+    tool.process_input(press, camera, scene);
+    expect(active, "rotated local X handle is pickable");
+    InputFrameSnapshot move{
+        .mouse_position = {400.0f, 200.0f},
+        .screen_width = 800,
+        .screen_height = 600,
+        .left_mouse = true,
+        .modifiers = {.ctrl = true}
+    };
+    tool.process_input(move, camera, scene);
+    expect(preview && preview->x == 0.0 && preview->y == 0.5 && preview->z == 0.0,
+        "local X drag follows oriented axis and snaps in local coordinates");
+}
+
 } // namespace
 
 int main() {
@@ -266,6 +386,8 @@ int main() {
     test_hover_and_selection_cycling();
     test_control_point_rectangle_selection();
     test_translation_gizmo_screen_drag_and_cancel();
+    test_rotation_and_scale_gizmo_controls();
+    test_translation_uses_oriented_frame();
 
     if (failures != 0) {
         std::cerr << failures << " surface picking test(s) failed\n";

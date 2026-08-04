@@ -10,6 +10,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QDockWidget>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -33,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <numbers>
 #include <span>
 #include <string>
 #include <utility>
@@ -163,6 +165,74 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_translate_action, &QAction::triggered, this, [this] {
         translate_selected_numeric();
     });
+    m_rotate_action = new QAction("Rotate...", this);
+    connect(m_rotate_action, &QAction::triggered, this, [this] { rotate_selected_numeric(); });
+    m_scale_action = new QAction("Scale...", this);
+    connect(m_scale_action, &QAction::triggered, this, [this] { scale_selected_numeric(); });
+
+    m_translate_mode_action = new QAction("Move", this);
+    m_rotate_mode_action = new QAction("Rotate", this);
+    m_scale_mode_action = new QAction("Scale", this);
+    auto* transform_group = new QActionGroup(this);
+    transform_group->setExclusive(true);
+    for (QAction* action : {
+             m_translate_mode_action,
+             m_rotate_mode_action,
+             m_scale_mode_action
+         }) {
+        action->setCheckable(true);
+        transform_group->addAction(action);
+    }
+    m_translate_mode_action->setChecked(true);
+    connect(m_translate_mode_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_transform_mode(EditorSession::TransformMode::translate);
+    });
+    connect(m_rotate_mode_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_transform_mode(EditorSession::TransformMode::rotate);
+    });
+    connect(m_scale_mode_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_transform_mode(EditorSession::TransformMode::scale);
+    });
+
+    m_center_pivot_action = new QAction("Selection Center", this);
+    m_primary_pivot_action = new QAction("Primary Control Point", this);
+    m_origin_pivot_action = new QAction("World Origin", this);
+    auto* pivot_group = new QActionGroup(this);
+    pivot_group->setExclusive(true);
+    for (QAction* action : {
+             m_center_pivot_action,
+             m_primary_pivot_action,
+             m_origin_pivot_action
+         }) {
+        action->setCheckable(true);
+        pivot_group->addAction(action);
+    }
+    m_center_pivot_action->setChecked(true);
+    connect(m_center_pivot_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_pivot_mode(EditorSession::PivotMode::selection_center);
+    });
+    connect(m_primary_pivot_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_pivot_mode(EditorSession::PivotMode::primary_control_point);
+    });
+    connect(m_origin_pivot_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_pivot_mode(EditorSession::PivotMode::world_origin);
+    });
+
+    m_world_orientation_action = new QAction("World", this);
+    m_local_orientation_action = new QAction("Local", this);
+    auto* orientation_group = new QActionGroup(this);
+    orientation_group->setExclusive(true);
+    for (QAction* action : {m_world_orientation_action, m_local_orientation_action}) {
+        action->setCheckable(true);
+        orientation_group->addAction(action);
+    }
+    m_world_orientation_action->setChecked(true);
+    connect(m_world_orientation_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_transform_orientation(EditorSession::TransformOrientation::world);
+    });
+    connect(m_local_orientation_action, &QAction::triggered, this, [this] {
+        (void)m_session.set_transform_orientation(EditorSession::TransformOrientation::local);
+    });
 
     m_delete_entity_action = new QAction(
         QIcon::fromTheme("edit-delete"),
@@ -216,12 +286,25 @@ MainWindow::MainWindow(QWidget* parent)
     edit_menu->addAction(m_shrink_point_selection_action);
     edit_menu->addSeparator();
     edit_menu->addAction(m_translate_action);
+    edit_menu->addAction(m_rotate_action);
+    edit_menu->addAction(m_scale_action);
     edit_menu->addSeparator();
     edit_menu->addAction(m_rename_entity_action);
     edit_menu->addAction(m_toggle_visibility_action);
     edit_menu->addAction(m_delete_entity_action);
     auto* create_menu = menuBar()->addMenu("Create");
     create_menu->addAction(m_create_surface_action);
+    auto* transform_menu = menuBar()->addMenu("Transform");
+    transform_menu->addAction(m_translate_mode_action);
+    transform_menu->addAction(m_rotate_mode_action);
+    transform_menu->addAction(m_scale_mode_action);
+    auto* orientation_menu = transform_menu->addMenu("Orientation");
+    orientation_menu->addAction(m_world_orientation_action);
+    orientation_menu->addAction(m_local_orientation_action);
+    auto* pivot_menu = transform_menu->addMenu("Pivot");
+    pivot_menu->addAction(m_center_pivot_action);
+    pivot_menu->addAction(m_primary_pivot_action);
+    pivot_menu->addAction(m_origin_pivot_action);
     auto* view_menu = menuBar()->addMenu("View");
     view_menu->addAction(m_outliner_dock->toggleViewAction());
     view_menu->addAction(m_inspector_dock->toggleViewAction());
@@ -235,8 +318,14 @@ MainWindow::MainWindow(QWidget* parent)
     toolbar->addAction(m_object_mode_action);
     toolbar->addAction(m_control_point_mode_action);
     toolbar->addAction(m_create_surface_action);
-    toolbar->addAction(m_translate_action);
     toolbar->addAction(m_delete_entity_action);
+    toolbar->addSeparator();
+    toolbar->addAction(m_translate_mode_action);
+    toolbar->addAction(m_rotate_mode_action);
+    toolbar->addAction(m_scale_mode_action);
+    toolbar->addSeparator();
+    toolbar->addAction(m_world_orientation_action);
+    toolbar->addAction(m_local_orientation_action);
     toolbar->addSeparator();
     toolbar->addAction(m_undo_action);
     toolbar->addAction(m_redo_action);
@@ -494,12 +583,99 @@ void MainWindow::translate_selected_numeric() {
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    if (!m_session.translate_selection({
-            fields[0]->value(),
-            fields[1]->value(),
-            fields[2]->value()
-        })) {
+    const auto frame = m_session.transform_frame();
+    if (!frame) {
+        return;
+    }
+    const cad::Vector3 delta = frame->x * fields[0]->value() +
+        frame->y * fields[1]->value() + frame->z * fields[2]->value();
+    if (!m_session.translate_selection(delta)) {
         QMessageBox::warning(this, "Translate Selection", "The translation could not be applied.");
+    }
+}
+
+void MainWindow::rotate_selected_numeric() {
+    if (!m_session.selection_pivot()) {
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle("Rotate Selection");
+    auto* axis = new QComboBox(&dialog);
+    axis->addItems({"X Axis", "Y Axis", "Z Axis", "Camera Plane"});
+    auto* angle = new QDoubleSpinBox(&dialog);
+    angle->setRange(-36000.0, 36000.0);
+    angle->setDecimals(4);
+    angle->setSingleStep(15.0);
+    auto* form = new QFormLayout;
+    form->addRow("Axis", axis);
+    form->addRow("Angle (degrees)", angle);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addLayout(form);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto frame = m_session.transform_frame();
+    if (!frame) {
+        return;
+    }
+    cad::Vector3 rotation_axis;
+    switch (axis->currentIndex()) {
+        case 0: rotation_axis = frame->x; break;
+        case 1: rotation_axis = frame->y; break;
+        case 2: rotation_axis = frame->z; break;
+        default:
+            rotation_axis = cad::normalized(m_session.camera().target - m_session.camera().position)
+                .value_or(cad::Vector3{});
+            break;
+    }
+    if (!m_session.rotate_selection(
+            rotation_axis,
+            angle->value() * std::numbers::pi / 180.0
+        )) {
+        QMessageBox::warning(this, "Rotate Selection", "The rotation could not be applied.");
+    }
+}
+
+void MainWindow::scale_selected_numeric() {
+    if (!m_session.selection_pivot()) {
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle("Scale Selection");
+    auto* constraint = new QComboBox(&dialog);
+    constraint->addItems({"Uniform", "X Axis", "Y Axis", "Z Axis"});
+    auto* factor = new QDoubleSpinBox(&dialog);
+    factor->setRange(0.001, 1'000'000.0);
+    factor->setDecimals(6);
+    factor->setValue(1.0);
+    factor->setSingleStep(0.1);
+    auto* form = new QFormLayout;
+    form->addRow("Constraint", constraint);
+    form->addRow("Factor", factor);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addLayout(form);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const std::array constraints = {
+        EditorSession::ScaleConstraint::uniform,
+        EditorSession::ScaleConstraint::x,
+        EditorSession::ScaleConstraint::y,
+        EditorSession::ScaleConstraint::z
+    };
+    if (!m_session.scale_selection(
+            constraints[static_cast<std::size_t>(constraint->currentIndex())],
+            factor->value()
+        )) {
+        QMessageBox::warning(this, "Scale Selection", "The scale could not be applied.");
     }
 }
 
@@ -538,7 +714,8 @@ void MainWindow::handle_editor_change(EditorChange change) {
     if (change.selection || change.entities || change.properties) {
         m_inspector->refresh();
     }
-    if (change.selection || change.entities || change.geometry || change.hover) {
+    if (change.selection || change.entities || change.geometry || change.hover ||
+        change.interaction_mode) {
         m_viewport->update();
     }
     if (change.selection || change.history || change.interaction_mode) {
@@ -553,7 +730,16 @@ void MainWindow::refresh_ui_state() {
     const QSignalBlocker point_blocker(m_control_point_mode_action);
     m_object_mode_action->setChecked(object_mode);
     m_control_point_mode_action->setChecked(!object_mode);
-    m_mode_status->setText(object_mode ? "Mode: Object" : "Mode: Control Points");
+    const char* transform_name = "Move";
+    switch (m_session.transform_mode()) {
+        case EditorSession::TransformMode::translate: transform_name = "Move"; break;
+        case EditorSession::TransformMode::rotate: transform_name = "Rotate"; break;
+        case EditorSession::TransformMode::scale: transform_name = "Scale"; break;
+    }
+    const char* orientation_name = m_session.transform_orientation() ==
+        EditorSession::TransformOrientation::world ? "World" : "Local";
+    m_mode_status->setText(QString("Mode: %1 / %2 / %3")
+        .arg(object_mode ? "Object" : "Control Points", transform_name, orientation_name));
     const bool has_point = m_session.selection().control_point() != nullptr;
     m_select_all_points_action->setEnabled(!object_mode && selected_entity_id().has_value());
     m_select_point_row_action->setEnabled(!object_mode && has_point);
@@ -561,6 +747,20 @@ void MainWindow::refresh_ui_state() {
     m_grow_point_selection_action->setEnabled(!object_mode && has_point);
     m_shrink_point_selection_action->setEnabled(!object_mode && has_point);
     m_translate_action->setEnabled(m_session.selection_pivot().has_value());
+    m_rotate_action->setEnabled(m_session.selection_pivot().has_value());
+    m_scale_action->setEnabled(m_session.selection_pivot().has_value());
+    const EditorSession::TransformMode transform_mode = m_session.transform_mode();
+    m_translate_mode_action->setChecked(transform_mode == EditorSession::TransformMode::translate);
+    m_rotate_mode_action->setChecked(transform_mode == EditorSession::TransformMode::rotate);
+    m_scale_mode_action->setChecked(transform_mode == EditorSession::TransformMode::scale);
+    const EditorSession::PivotMode pivot_mode = m_session.pivot_mode();
+    m_center_pivot_action->setChecked(pivot_mode == EditorSession::PivotMode::selection_center);
+    m_primary_pivot_action->setChecked(pivot_mode == EditorSession::PivotMode::primary_control_point);
+    m_origin_pivot_action->setChecked(pivot_mode == EditorSession::PivotMode::world_origin);
+    const bool world_orientation = m_session.transform_orientation() ==
+        EditorSession::TransformOrientation::world;
+    m_world_orientation_action->setChecked(world_orientation);
+    m_local_orientation_action->setChecked(!world_orientation);
 
     m_undo_action->setEnabled(m_session.can_undo());
     m_redo_action->setEnabled(m_session.can_redo());

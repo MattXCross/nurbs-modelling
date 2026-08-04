@@ -25,8 +25,11 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
-        std::optional<cad::Point3> translation_pivot,
+        std::optional<TransformFrame> transform_frame,
+        TransformMode transform_mode,
         std::optional<TranslationConstraint> active_translation_constraint,
+        std::optional<RotationConstraint> active_rotation_constraint,
+        std::optional<ScaleConstraint> active_scale_constraint,
         int framebuffer_width,
         int framebuffer_height
     );

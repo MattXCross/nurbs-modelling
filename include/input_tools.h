@@ -46,7 +46,7 @@ public:
 class TranslationTool final : public IInputTool {
 public:
     using ActiveHandler = std::move_only_function<bool()>;
-    using PivotHandler = std::move_only_function<std::optional<cad::Point3>()>;
+    using PivotHandler = std::move_only_function<std::optional<TransformFrame>()>;
     using BeginHandler = std::move_only_function<bool(TranslationConstraint)>;
     using PreviewHandler = std::move_only_function<bool(cad::Vector3)>;
     using FinishHandler = std::move_only_function<void()>;
@@ -76,6 +76,7 @@ private:
     FinishHandler m_cancel;
     TranslationConstraint m_constraint{TranslationConstraint::screen};
     cad::Point3 m_start_pivot;
+    TransformFrame m_frame;
     cad::Point3 m_start_plane_point;
     cad::Vector3 m_plane_normal;
     Vec2 m_start_mouse;
@@ -83,6 +84,78 @@ private:
     double m_gizmo_scale{1.0};
     double m_axis_screen_length{1.0};
     double m_snap_increment{0.5};
+    bool m_dragging{false};
+};
+
+class RotationTool final : public IInputTool {
+public:
+    using ActiveHandler = std::move_only_function<bool()>;
+    using PivotHandler = std::move_only_function<std::optional<TransformFrame>()>;
+    using BeginHandler =
+        std::move_only_function<bool(RotationConstraint, cad::Vector3)>;
+    using PreviewHandler = std::move_only_function<bool(double)>;
+    using FinishHandler = std::move_only_function<void()>;
+
+    RotationTool(
+        ActiveHandler active,
+        PivotHandler pivot,
+        BeginHandler begin,
+        PreviewHandler preview,
+        FinishHandler finish,
+        FinishHandler cancel
+    );
+    void process_input(
+        const InputFrameSnapshot& input,
+        OrbitCameraController& camera_controller,
+        Scene& scene
+    ) override;
+
+private:
+    ActiveHandler m_active;
+    PivotHandler m_pivot;
+    BeginHandler m_begin;
+    PreviewHandler m_preview;
+    FinishHandler m_finish;
+    FinishHandler m_cancel;
+    Vec2 m_center;
+    double m_start_angle{0.0};
+    bool m_dragging{false};
+};
+
+class ScaleTool final : public IInputTool {
+public:
+    using ActiveHandler = std::move_only_function<bool()>;
+    using PivotHandler = std::move_only_function<std::optional<TransformFrame>()>;
+    using BeginHandler = std::move_only_function<bool(ScaleConstraint)>;
+    using PreviewHandler = std::move_only_function<bool(double)>;
+    using FinishHandler = std::move_only_function<void()>;
+
+    ScaleTool(
+        ActiveHandler active,
+        PivotHandler pivot,
+        BeginHandler begin,
+        PreviewHandler preview,
+        FinishHandler finish,
+        FinishHandler cancel
+    );
+    void process_input(
+        const InputFrameSnapshot& input,
+        OrbitCameraController& camera_controller,
+        Scene& scene
+    ) override;
+
+private:
+    ActiveHandler m_active;
+    PivotHandler m_pivot;
+    BeginHandler m_begin;
+    PreviewHandler m_preview;
+    FinishHandler m_finish;
+    FinishHandler m_cancel;
+    ScaleConstraint m_constraint{ScaleConstraint::uniform};
+    TransformFrame m_frame;
+    Vec2 m_start_mouse;
+    Vec2 m_axis_screen_direction;
+    double m_axis_screen_length{80.0};
     bool m_dragging{false};
 };
 
