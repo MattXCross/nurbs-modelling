@@ -48,6 +48,7 @@ target_link_libraries(cad_document PUBLIC cad_geometry PRIVATE nlohmann_json::nl
 add_library(cad_viewport STATIC
     src/gizmo_controller.cpp
     src/transform_gizmos.cpp
+    src/viewport_display_settings.cpp
     src/viewport_math.cpp
 )
 target_include_directories(cad_viewport PUBLIC include)
@@ -177,6 +178,13 @@ if(BUILD_TESTING)
     target_link_libraries(surface_tessellation_test PRIVATE cad_geometry)
     enable_project_warnings(surface_tessellation_test)
     add_test(NAME surface_tessellation_test COMMAND surface_tessellation_test)
+
+    add_executable(viewport_display_settings_test
+        tests/viewport_display_settings_test.cpp
+    )
+    target_link_libraries(viewport_display_settings_test PRIVATE cad_viewport)
+    enable_project_warnings(viewport_display_settings_test)
+    add_test(NAME viewport_display_settings_test COMMAND viewport_display_settings_test)
 endif()
 
 add_executable(cad_app main.cpp)

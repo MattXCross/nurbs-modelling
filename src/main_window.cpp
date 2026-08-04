@@ -277,6 +277,49 @@ MainWindow::MainWindow(QWidget* parent)
         (void)m_session.set_camera_projection(ProjectionMode::orthographic);
     });
 
+    m_shaded_action = new QAction("Shaded", this);
+    m_wireframe_action = new QAction("Wireframe", this);
+    m_shaded_edges_action = new QAction("Shaded with Edges", this);
+    auto* display_mode_group = new QActionGroup(this);
+    display_mode_group->setExclusive(true);
+    for (QAction* action : {m_shaded_action, m_wireframe_action, m_shaded_edges_action}) {
+        action->setCheckable(true);
+        display_mode_group->addAction(action);
+    }
+    m_shaded_edges_action->setChecked(true);
+    const auto set_surface_mode = [this](SurfaceDisplayMode mode) {
+        ViewportDisplaySettings settings = m_viewport->display_settings();
+        settings.surface_mode = mode;
+        m_viewport->set_display_settings(settings);
+        refresh_ui_state();
+    };
+    connect(m_shaded_action, &QAction::triggered, this, [set_surface_mode] {
+        set_surface_mode(SurfaceDisplayMode::shaded);
+    });
+    connect(m_wireframe_action, &QAction::triggered, this, [set_surface_mode] {
+        set_surface_mode(SurfaceDisplayMode::wireframe);
+    });
+    connect(m_shaded_edges_action, &QAction::triggered, this, [set_surface_mode] {
+        set_surface_mode(SurfaceDisplayMode::shaded_with_edges);
+    });
+
+    m_control_net_visibility_action = new QAction("Control Net", this);
+    m_control_net_visibility_action->setCheckable(true);
+    m_control_net_visibility_action->setChecked(true);
+    connect(m_control_net_visibility_action, &QAction::toggled, this, [this](bool visible) {
+        ViewportDisplaySettings settings = m_viewport->display_settings();
+        settings.show_control_net = visible;
+        m_viewport->set_display_settings(settings);
+    });
+    m_control_point_visibility_action = new QAction("Control Points", this);
+    m_control_point_visibility_action->setCheckable(true);
+    m_control_point_visibility_action->setChecked(true);
+    connect(m_control_point_visibility_action, &QAction::toggled, this, [this](bool visible) {
+        ViewportDisplaySettings settings = m_viewport->display_settings();
+        settings.show_control_points = visible;
+        m_viewport->set_display_settings(settings);
+    });
+
     m_outliner->setContextMenuPolicy(Qt::ActionsContextMenu);
     m_outliner->addAction(m_create_surface_action);
     m_outliner->addAction(m_rename_entity_action);
@@ -350,6 +393,12 @@ MainWindow::MainWindow(QWidget* parent)
     auto* projection_menu = view_menu->addMenu("Projection");
     projection_menu->addAction(m_perspective_action);
     projection_menu->addAction(m_orthographic_action);
+    auto* display_mode_menu = view_menu->addMenu("Surface Display");
+    display_mode_menu->addAction(m_shaded_action);
+    display_mode_menu->addAction(m_wireframe_action);
+    display_mode_menu->addAction(m_shaded_edges_action);
+    view_menu->addAction(m_control_net_visibility_action);
+    view_menu->addAction(m_control_point_visibility_action);
     view_menu->addSeparator();
     view_menu->addAction(m_outliner_dock->toggleViewAction());
     view_menu->addAction(m_inspector_dock->toggleViewAction());
@@ -834,6 +883,18 @@ void MainWindow::refresh_ui_state() {
     const bool perspective = m_session.camera().projection == ProjectionMode::perspective;
     m_perspective_action->setChecked(perspective);
     m_orthographic_action->setChecked(!perspective);
+    const ViewportDisplaySettings& display = m_viewport->display_settings();
+    m_shaded_action->setChecked(display.surface_mode == SurfaceDisplayMode::shaded);
+    m_wireframe_action->setChecked(display.surface_mode == SurfaceDisplayMode::wireframe);
+    m_shaded_edges_action->setChecked(
+        display.surface_mode == SurfaceDisplayMode::shaded_with_edges
+    );
+    {
+        const QSignalBlocker net_blocker(m_control_net_visibility_action);
+        const QSignalBlocker points_blocker(m_control_point_visibility_action);
+        m_control_net_visibility_action->setChecked(display.show_control_net);
+        m_control_point_visibility_action->setChecked(display.show_control_points);
+    }
 
     const std::span selected_points = m_session.selection().control_points();
     if (!selected_points.empty()) {

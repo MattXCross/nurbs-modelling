@@ -3,6 +3,7 @@
 #include "gizmo.h"
 #include "orbit_camera.h"
 #include "entity_id.h"
+#include "viewport_display_settings.h"
 
 #include <memory>
 #include <optional>
@@ -19,6 +20,8 @@ public:
     RaylibViewportRenderer(const RaylibViewportRenderer&) = delete;
     RaylibViewportRenderer& operator=(const RaylibViewportRenderer&) = delete;
 
+    void cleanup_gl();
+
     void render(
         const Scene& scene,
         const CameraState& camera,
@@ -26,6 +29,7 @@ public:
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
         std::span<const GizmoPrimitive> gizmos,
+        const ViewportDisplaySettings& display_settings,
         int framebuffer_width,
         int framebuffer_height
     );

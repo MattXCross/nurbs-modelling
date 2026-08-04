@@ -116,6 +116,14 @@ RaylibViewportWidget::~RaylibViewportWidget() {
     cleanup_gl();
 }
 
+void RaylibViewportWidget::set_display_settings(ViewportDisplaySettings settings) {
+    if (m_display_settings == settings) {
+        return;
+    }
+    m_display_settings = settings;
+    update();
+}
+
 void RaylibViewportWidget::initializeGL() {
     if (rlgl_owner != nullptr && rlgl_owner != this) {
         qFatal("Only one RaylibViewportWidget can own raylib's global rlgl state");
@@ -189,6 +197,7 @@ void RaylibViewportWidget::paintGL() {
         m_session.selected_entity_id(),
         m_session.hovered_entity_id(),
         gizmos,
+        m_display_settings,
         framebuffer_width,
         framebuffer_height
     );
@@ -295,6 +304,7 @@ void RaylibViewportWidget::cleanup_gl() {
     }
 
     makeCurrent();
+    m_renderer.cleanup_gl();
     rlglClose();
     rlgl_owner = nullptr;
     m_gl = nullptr;

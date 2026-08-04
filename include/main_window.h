@@ -84,6 +84,11 @@ private:
     QAction* m_frame_selection_action{nullptr};
     QAction* m_perspective_action{nullptr};
     QAction* m_orthographic_action{nullptr};
+    QAction* m_shaded_action{nullptr};
+    QAction* m_wireframe_action{nullptr};
+    QAction* m_shaded_edges_action{nullptr};
+    QAction* m_control_net_visibility_action{nullptr};
+    QAction* m_control_point_visibility_action{nullptr};
     QLabel* m_mode_status{nullptr};
     QLabel* m_selection_status{nullptr};
 };
