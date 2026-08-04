@@ -10,6 +10,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLVersionFunctionsFactory>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QtGlobal>
 
@@ -110,6 +111,12 @@ RaylibViewportWidget::RaylibViewportWidget(EditorSession& session, QWidget* pare
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+    m_fps_timer.start();
+    auto* repaint_timer = new QTimer(this);
+    repaint_timer->setTimerType(Qt::PreciseTimer);
+    repaint_timer->setInterval(16);
+    connect(repaint_timer, &QTimer::timeout, this, QOverload<>::of(&RaylibViewportWidget::update));
+    repaint_timer->start();
 }
 
 RaylibViewportWidget::~RaylibViewportWidget() {
@@ -122,6 +129,10 @@ void RaylibViewportWidget::set_display_settings(ViewportDisplaySettings settings
     }
     m_display_settings = settings;
     update();
+}
+
+void RaylibViewportWidget::set_fps_handler(std::move_only_function<void(double)> handler) {
+    m_fps_handler = std::move(handler);
 }
 
 void RaylibViewportWidget::initializeGL() {
@@ -201,6 +212,19 @@ void RaylibViewportWidget::paintGL() {
         framebuffer_width,
         framebuffer_height
     );
+
+    ++m_frames_in_window;
+    const qint64 elapsed_milliseconds = m_fps_timer.elapsed();
+    if (elapsed_milliseconds >= 1000) {
+        if (m_fps_handler) {
+            m_fps_handler(
+                static_cast<double>(m_frames_in_window) * 1000.0 /
+                static_cast<double>(elapsed_milliseconds)
+            );
+        }
+        m_frames_in_window = 0;
+        m_fps_timer.restart();
+    }
 }
 
 void RaylibViewportWidget::mousePressEvent(QMouseEvent* event) {

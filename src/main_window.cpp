@@ -434,6 +434,12 @@ MainWindow::MainWindow(QWidget* parent)
     statusBar()->addPermanentWidget(m_mode_status);
     m_selection_status = new QLabel(statusBar());
     statusBar()->addPermanentWidget(m_selection_status);
+    m_fps_status = new QLabel("FPS: --", statusBar());
+    m_fps_status->setMinimumWidth(72);
+    statusBar()->addPermanentWidget(m_fps_status);
+    m_viewport->set_fps_handler([this](double fps) {
+        m_fps_status->setText(QString("FPS: %1").arg(fps, 0, 'f', 1));
+    });
 
     m_session.set_change_handler([this](EditorChange change) {
         handle_editor_change(change);

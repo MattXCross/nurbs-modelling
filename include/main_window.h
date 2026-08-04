@@ -91,4 +91,5 @@ private:
     QAction* m_control_point_visibility_action{nullptr};
     QLabel* m_mode_status{nullptr};
     QLabel* m_selection_status{nullptr};
+    QLabel* m_fps_status{nullptr};
 };

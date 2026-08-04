@@ -6,8 +6,10 @@
 #include "viewport_display_settings.h"
 
 #include <QOpenGLWidget>
+#include <QElapsedTimer>
 #include <QPointF>
 
+#include <functional>
 class EditorSession;
 class QKeyEvent;
 class QMouseEvent;
@@ -23,6 +25,7 @@ public:
         return m_display_settings;
     }
     void set_display_settings(ViewportDisplaySettings settings);
+    void set_fps_handler(std::move_only_function<void(double)> handler);
 
 protected:
     void initializeGL() override;
@@ -41,6 +44,9 @@ private:
     GizmoController m_gizmos;
     RaylibViewportRenderer m_renderer;
     ViewportDisplaySettings m_display_settings;
+    std::move_only_function<void(double)> m_fps_handler;
+    QElapsedTimer m_fps_timer;
+    int m_frames_in_window{0};
     QOpenGLFunctions_3_3_Core* m_gl{nullptr};
     QPointF m_last_pointer_position;
     bool m_rlgl_initialized{false};
