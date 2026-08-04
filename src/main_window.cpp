@@ -297,6 +297,14 @@ void MainWindow::handle_editor_change(EditorChange change) {
 void MainWindow::refresh_ui_state() {
     m_undo_action->setEnabled(m_session.can_undo());
     m_redo_action->setEnabled(m_session.can_redo());
+    const std::string undo_description = m_session.undo_description();
+    const std::string redo_description = m_session.redo_description();
+    m_undo_action->setText(undo_description.empty()
+        ? "Undo"
+        : QString("Undo %1").arg(QString::fromStdString(undo_description)));
+    m_redo_action->setText(redo_description.empty()
+        ? "Redo"
+        : QString("Redo %1").arg(QString::fromStdString(redo_description)));
 
     const std::optional<EntityId> selected_entity = selected_entity_id();
     const SceneNode* selected_node = selected_entity.has_value()

@@ -25,6 +25,16 @@ double field_value(
     return 0.0;
 }
 
+std::string_view field_description(EditorSession::ControlPointField field) {
+    switch (field) {
+        case EditorSession::ControlPointField::position_x: return "Edit X Position";
+        case EditorSession::ControlPointField::position_y: return "Edit Y Position";
+        case EditorSession::ControlPointField::position_z: return "Edit Z Position";
+        case EditorSession::ControlPointField::weight: return "Edit Weight";
+    }
+    return "Edit Control Point";
+}
+
 void set_field_value(
     ControlPoint& point,
     EditorSession::ControlPointField field,
@@ -41,18 +51,22 @@ void set_field_value(
 class AppliedValueCommand final : public ICommand {
 public:
     AppliedValueCommand(
+        std::string description,
         std::move_only_function<bool(double)> set_value,
         double initial_value,
         double final_value
     )
-        : m_set_value(std::move(set_value)),
+        : m_description(std::move(description)),
+          m_set_value(std::move(set_value)),
           m_initial_value(initial_value),
           m_final_value(final_value) {}
 
+    [[nodiscard]] std::string_view description() const override { return m_description; }
     bool undo() override { return m_set_value(m_initial_value); }
     bool redo() override { return m_set_value(m_final_value); }
 
 private:
+    std::string m_description;
     std::move_only_function<bool(double)> m_set_value;
     double m_initial_value{0.0};
     double m_final_value{0.0};
@@ -68,6 +82,8 @@ public:
         : m_scene(scene),
           m_entity(entity),
           m_on_removed(std::move(on_removed)) {}
+
+    [[nodiscard]] std::string_view description() const override { return "Create Surface"; }
 
     bool undo() override {
         auto removed = m_scene.remove_entity(m_entity);
@@ -105,6 +121,8 @@ public:
           m_removed(std::move(removed)),
           m_entity(m_removed->entity()),
           m_on_removed(std::move(on_removed)) {}
+
+    [[nodiscard]] std::string_view description() const override { return "Delete Surface"; }
 
     bool undo() override {
         if (!m_removed.has_value() || !m_scene.restore_entity(*m_removed).has_value()) {
@@ -144,6 +162,8 @@ public:
           m_initial_name(std::move(initial_name)),
           m_final_name(std::move(final_name)) {}
 
+    [[nodiscard]] std::string_view description() const override { return "Rename Surface"; }
+
     bool undo() override { return m_scene.rename_entity(m_entity, m_initial_name).has_value(); }
     bool redo() override { return m_scene.rename_entity(m_entity, m_final_name).has_value(); }
 
@@ -158,6 +178,10 @@ class VisibilityCommand final : public ICommand {
 public:
     VisibilityCommand(Scene& scene, EntityId entity, bool initial, bool final)
         : m_scene(scene), m_entity(entity), m_initial(initial), m_final(final) {}
+
+    [[nodiscard]] std::string_view description() const override {
+        return m_final ? "Show Surface" : "Hide Surface";
+    }
 
     bool undo() override {
         return m_scene.set_entity_visibility(m_entity, m_initial).has_value();
@@ -325,6 +349,28 @@ bool EditorSession::can_redo() const {
     return !m_pending_edit.has_value() && m_history.can_redo();
 }
 
+std::string EditorSession::undo_description() const {
+    if (pending_edit_has_preview()) {
+        return std::string(field_description(m_pending_edit->field));
+    }
+    return std::string(m_history.undo_description());
+}
+
+std::string EditorSession::redo_description() const {
+    return std::string(m_history.redo_description());
+}
+
+bool EditorSession::is_dirty() const {
+    return pending_edit_has_preview() || m_history.is_dirty();
+}
+
+void EditorSession::mark_saved() {
+    if (!m_pending_edit.has_value()) {
+        m_history.mark_saved();
+        notify(EditorChange{.history = true});
+    }
+}
+
 std::expected<EntityId, SceneMutationError> EditorSession::create_surface_entity(
     std::string name,
     std::unique_ptr<NurbsSurface> surface
@@ -486,6 +532,7 @@ void EditorSession::finish_control_point_edit(ControlPointField field) {
 
     Scene* scene = &m_scene;
     m_history.record_applied(std::make_unique<AppliedValueCommand>(
+        std::string(field_description(field)),
         [scene, selection = edit.selection, field](double value) {
             if (const ControlPoint* selected = scene->resolve(selection)) {
                 ControlPoint updated = *selected;

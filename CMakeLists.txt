@@ -137,6 +137,13 @@ if(BUILD_TESTING)
     target_link_libraries(document_io_test PRIVATE cad_document)
     enable_project_warnings(document_io_test)
     add_test(NAME document_io_test COMMAND document_io_test)
+
+    add_executable(command_history_test
+        tests/command_history_test.cpp
+    )
+    target_link_libraries(command_history_test PRIVATE cad_document)
+    enable_project_warnings(command_history_test)
+    add_test(NAME command_history_test COMMAND command_history_test)
 endif()
 
 add_executable(cad_app main.cpp)

@@ -36,6 +36,10 @@ public:
     [[nodiscard]] bool redo();
     [[nodiscard]] bool can_undo() const;
     [[nodiscard]] bool can_redo() const;
+    [[nodiscard]] std::string undo_description() const;
+    [[nodiscard]] std::string redo_description() const;
+    [[nodiscard]] bool is_dirty() const;
+    void mark_saved();
 
     [[nodiscard]] std::expected<EntityId, SceneMutationError> create_surface_entity(
         std::string name,
