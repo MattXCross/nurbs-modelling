@@ -541,16 +541,19 @@ public:
         rlDrawRenderBatchActive();
 
         ensure_shader();
+        const bool see_through_wireframe =
+            display_settings.surface_mode == SurfaceDisplayMode::wireframe;
+        if (see_through_wireframe) rlDisableDepthTest();
         std::unordered_set<std::uint64_t> active_surfaces;
         for (const SceneNode& node : scene.nodes()) {
             if (node.surface != nullptr) active_surfaces.insert(node.surface->identity());
         }
         for (const SceneNode& node : scene.nodes()) {
             if (!node.visible || node.surface == nullptr) continue;
-            const cad::SurfaceTessellationSettings& tessellation_settings =
+            const cad::SurfaceTessellationSettings tessellation_settings =
                 interactive_geometry_edit
                     ? m_interactive_tessellation_settings
-                    : m_tessellation_settings;
+                    : viewport_tessellation_settings(display_settings.quality);
             GpuSurface* gpu = gpu_surface(
                 *node.surface,
                 node.geometry_revision,
@@ -580,6 +583,7 @@ public:
             unload_gpu_surface(entry.second);
             return true;
         });
+        if (see_through_wireframe) rlEnableDepthTest();
 
         rlEnableBackfaceCulling();
         for (const SceneNode& node : scene.nodes()) {
@@ -689,9 +693,6 @@ private:
         rlDisableShader();
     }
 
-    cad::SurfaceTessellationSettings m_tessellation_settings{
-        .best_effort = true
-    };
     cad::SurfaceTessellationSettings m_interactive_tessellation_settings{
         .chordal_tolerance = 0.12,
         .normal_angle_tolerance_radians = 0.35,

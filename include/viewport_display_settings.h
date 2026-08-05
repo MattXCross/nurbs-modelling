@@ -1,6 +1,7 @@
 #pragma once
 
 #include "entity_id.h"
+#include "surface_tessellation.h"
 
 enum class SurfaceDisplayMode {
     shaded,
@@ -8,8 +9,15 @@ enum class SurfaceDisplayMode {
     shaded_with_edges
 };
 
+enum class ViewportQuality {
+    low,
+    medium,
+    high
+};
+
 struct ViewportDisplaySettings {
-    SurfaceDisplayMode surface_mode{SurfaceDisplayMode::shaded_with_edges};
+    SurfaceDisplayMode surface_mode{SurfaceDisplayMode::shaded};
+    ViewportQuality quality{ViewportQuality::high};
     bool show_control_net{true};
     bool show_control_points{true};
 
@@ -25,3 +33,6 @@ struct DisplayColor {
 };
 
 [[nodiscard]] DisplayColor object_display_color(EntityId entity) noexcept;
+[[nodiscard]] cad::SurfaceTessellationSettings viewport_tessellation_settings(
+    ViewportQuality quality
+) noexcept;

@@ -12,6 +12,7 @@
 class ControlPointInspectorWidget;
 class QAction;
 class QCloseEvent;
+class QComboBox;
 class QDockWidget;
 class QLabel;
 class QString;
@@ -89,6 +90,8 @@ private:
     QAction* m_shaded_edges_action{nullptr};
     QAction* m_control_net_visibility_action{nullptr};
     QAction* m_control_point_visibility_action{nullptr};
+    QComboBox* m_viewport_display_combo{nullptr};
+    QComboBox* m_viewport_quality_combo{nullptr};
     QLabel* m_mode_status{nullptr};
     QLabel* m_selection_status{nullptr};
     QLabel* m_fps_status{nullptr};

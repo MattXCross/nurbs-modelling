@@ -30,6 +30,7 @@
 #include <QStatusBar>
 #include <QToolBar>
 #include <QVBoxLayout>
+#include <QWidget>
 
 #include <algorithm>
 #include <array>
@@ -66,8 +67,13 @@ MainWindow::MainWindow(QWidget* parent)
     setMinimumSize(800, 500);
     resize(1280, 720);
 
-    m_viewport = new RaylibViewportWidget(m_session, this);
-    setCentralWidget(m_viewport);
+    auto* viewport_container = new QWidget(this);
+    auto* viewport_layout = new QVBoxLayout(viewport_container);
+    viewport_layout->setContentsMargins(0, 0, 0, 0);
+    viewport_layout->setSpacing(0);
+    m_viewport = new RaylibViewportWidget(m_session, viewport_container);
+    viewport_layout->addWidget(m_viewport, 1);
+    setCentralWidget(viewport_container);
 
     m_outliner_dock = new QDockWidget("Scene", this);
     m_outliner_dock->setObjectName("sceneOutlinerDock");
@@ -277,16 +283,16 @@ MainWindow::MainWindow(QWidget* parent)
         (void)m_session.set_camera_projection(ProjectionMode::orthographic);
     });
 
-    m_shaded_action = new QAction("Shaded", this);
+    m_shaded_action = new QAction("Surface", this);
     m_wireframe_action = new QAction("Wireframe", this);
-    m_shaded_edges_action = new QAction("Shaded with Edges", this);
+    m_shaded_edges_action = new QAction("Surface + Wireframe", this);
     auto* display_mode_group = new QActionGroup(this);
     display_mode_group->setExclusive(true);
     for (QAction* action : {m_shaded_action, m_wireframe_action, m_shaded_edges_action}) {
         action->setCheckable(true);
         display_mode_group->addAction(action);
     }
-    m_shaded_edges_action->setChecked(true);
+    m_shaded_action->setChecked(true);
     const auto set_surface_mode = [this](SurfaceDisplayMode mode) {
         ViewportDisplaySettings settings = m_viewport->display_settings();
         settings.surface_mode = mode;
@@ -404,6 +410,51 @@ MainWindow::MainWindow(QWidget* parent)
     view_menu->addAction(m_inspector_dock->toggleViewAction());
     auto* help_menu = menuBar()->addMenu("Help");
     help_menu->addAction(about_action);
+
+    auto* viewport_toolbar = new QToolBar("Viewport", viewport_container);
+    viewport_toolbar->setObjectName("viewportToolbar");
+    viewport_toolbar->setMovable(false);
+    viewport_toolbar->setFloatable(false);
+    viewport_toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    viewport_toolbar->addWidget(new QLabel("Display:", viewport_toolbar));
+    m_viewport_display_combo = new QComboBox(viewport_toolbar);
+    m_viewport_display_combo->setObjectName("viewportDisplayCombo");
+    m_viewport_display_combo->addItem("Surface", static_cast<int>(SurfaceDisplayMode::shaded));
+    m_viewport_display_combo->addItem(
+        "Surface + Wireframe", static_cast<int>(SurfaceDisplayMode::shaded_with_edges)
+    );
+    m_viewport_display_combo->addItem(
+        "Wireframe", static_cast<int>(SurfaceDisplayMode::wireframe)
+    );
+    viewport_toolbar->addWidget(m_viewport_display_combo);
+    viewport_toolbar->addSeparator();
+    viewport_toolbar->addWidget(new QLabel("Quality:", viewport_toolbar));
+    m_viewport_quality_combo = new QComboBox(viewport_toolbar);
+    m_viewport_quality_combo->setObjectName("viewportQualityCombo");
+    m_viewport_quality_combo->addItem("Low", static_cast<int>(ViewportQuality::low));
+    m_viewport_quality_combo->addItem("Medium", static_cast<int>(ViewportQuality::medium));
+    m_viewport_quality_combo->addItem("High", static_cast<int>(ViewportQuality::high));
+    viewport_toolbar->addWidget(m_viewport_quality_combo);
+    viewport_toolbar->addSeparator();
+    viewport_toolbar->addAction(m_control_net_visibility_action);
+    viewport_toolbar->addAction(m_control_point_visibility_action);
+    viewport_layout->insertWidget(0, viewport_toolbar);
+
+    connect(m_viewport_display_combo, &QComboBox::currentIndexChanged, this, [this](int) {
+        ViewportDisplaySettings settings = m_viewport->display_settings();
+        settings.surface_mode = static_cast<SurfaceDisplayMode>(
+            m_viewport_display_combo->currentData().toInt()
+        );
+        m_viewport->set_display_settings(settings);
+        refresh_ui_state();
+    });
+    connect(m_viewport_quality_combo, &QComboBox::currentIndexChanged, this, [this](int) {
+        ViewportDisplaySettings settings = m_viewport->display_settings();
+        settings.quality = static_cast<ViewportQuality>(
+            m_viewport_quality_combo->currentData().toInt()
+        );
+        m_viewport->set_display_settings(settings);
+    });
 
     auto* toolbar = addToolBar("Main toolbar");
     toolbar->setObjectName("mainToolbar");
@@ -896,8 +947,16 @@ void MainWindow::refresh_ui_state() {
         display.surface_mode == SurfaceDisplayMode::shaded_with_edges
     );
     {
+        const QSignalBlocker display_blocker(m_viewport_display_combo);
+        const QSignalBlocker quality_blocker(m_viewport_quality_combo);
         const QSignalBlocker net_blocker(m_control_net_visibility_action);
         const QSignalBlocker points_blocker(m_control_point_visibility_action);
+        m_viewport_display_combo->setCurrentIndex(m_viewport_display_combo->findData(
+            static_cast<int>(display.surface_mode)
+        ));
+        m_viewport_quality_combo->setCurrentIndex(m_viewport_quality_combo->findData(
+            static_cast<int>(display.quality)
+        ));
         m_control_net_visibility_action->setChecked(display.show_control_net);
         m_control_point_visibility_action->setChecked(display.show_control_points);
     }
