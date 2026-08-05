@@ -207,6 +207,7 @@ void RaylibViewportWidget::paintGL() {
         m_session.selection().control_points(),
         m_session.selected_entity_id(),
         m_session.hovered_entity_id(),
+        m_session.entity_transform_preview(),
         gizmos,
         m_display_settings,
         m_session.interactive_geometry_edit(),

@@ -274,15 +274,24 @@ std::expected<SurfaceMesh, SurfaceTessellationError> tessellate_surface(
     if (!valid_settings(settings, settings_error)) {
         return std::unexpected(SurfaceTessellationError{settings_error});
     }
+    std::optional<GridSamples> last_grid;
     for (std::size_t depth = 0; depth <= settings.max_refinement_depth; ++depth) {
         auto grid = evaluate_grid(surface, depth, settings);
-        if (!grid) return std::unexpected(grid.error());
+        if (!grid) {
+            if (settings.best_effort && last_grid &&
+                grid.error().code == SurfaceTessellationErrorCode::resource_limit_exceeded) {
+                return make_mesh(*last_grid);
+            }
+            return std::unexpected(grid.error());
+        }
         if (grid_meets_tolerance(surface, *grid, settings)) return make_mesh(*grid);
         if (depth == settings.max_refinement_depth) {
+            if (settings.best_effort) return make_mesh(*grid);
             return std::unexpected(SurfaceTessellationError{
                 SurfaceTessellationErrorCode::refinement_limit_reached, depth
             });
         }
+        last_grid = std::move(*grid);
     }
     return std::unexpected(SurfaceTessellationError{
         SurfaceTessellationErrorCode::refinement_limit_reached,
@@ -301,6 +310,7 @@ std::size_t SurfaceTessellationCache::KeyHash::operator()(const Key& key) const 
     ));
     hash_combine(seed, std::hash<std::size_t>{}(key.settings.max_refinement_depth));
     hash_combine(seed, std::hash<std::size_t>{}(key.settings.max_vertices));
+    hash_combine(seed, std::hash<bool>{}(key.settings.best_effort));
     return seed;
 }
 

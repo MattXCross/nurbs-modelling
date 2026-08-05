@@ -236,6 +236,33 @@ void test_object_translation_and_invalid_delta() {
     const Point3D last_initial = session.scene().resolve(last)->position;
     const auto pivot = session.selection_pivot();
     expect(pivot.has_value(), "object selection has translation pivot");
+    const std::uint64_t initial_revision = session.scene().nodes().front().geometry_revision;
+    expect(
+        session.begin_translation(EditorSession::TranslationConstraint::y),
+        "begin GPU object translation preview"
+    );
+    expect(session.preview_translation({0.0, 2.0, 0.0}), "preview GPU object translation");
+    expect(session.scene().resolve(first)->position == first_initial,
+        "object preview leaves exact geometry unchanged");
+    expect(session.scene().nodes().front().geometry_revision == initial_revision,
+        "object preview preserves geometry revision");
+    expect(!session.interactive_geometry_edit(),
+        "object preview keeps the full-quality mesh cache active");
+    const auto preview = session.entity_transform_preview();
+    expect(preview && preview->entity == entity, "object preview exposes its entity transform");
+    if (preview) {
+        expect(preview->transform.transform_point(first_initial) ==
+                first_initial + cad::Vector3{0.0, 2.0, 0.0},
+            "object preview transform maps the cached mesh position");
+    }
+    expect(session.selection_pivot() == *pivot + cad::Vector3{0.0, 2.0, 0.0},
+        "object preview moves the displayed gizmo pivot");
+    expect(session.cancel_translation(), "cancel GPU object translation preview");
+    expect(!session.entity_transform_preview(), "cancel clears object preview transform");
+    expect(session.scene().nodes().front().geometry_revision == initial_revision,
+        "canceling object preview does not invalidate geometry");
+    expect(!session.can_undo(), "canceling object preview creates no history entry");
+
     expect(session.translate_selection({0.0, 1.0, 0.0}), "translate whole object");
     expect(session.scene().resolve(first)->position == first_initial + cad::Vector3{0.0, 1.0, 0.0},
         "object translation moves first control point");
@@ -262,10 +289,17 @@ void test_rotation_and_scale_transactions() {
     expect(session.select_entity(EntitySelection{entity}), "select transform object");
     const ControlPointSelection corner{entity, 0, 0};
     const Point3D initial = session.scene().resolve(corner)->position;
-    expect(
-        session.rotate_selection({0.0, 1.0, 0.0}, std::numbers::pi / 2.0),
-        "rotate object around Y"
-    );
+    const std::uint64_t rotation_revision = session.scene().nodes().front().geometry_revision;
+    expect(session.begin_rotation(
+        EditorSession::RotationConstraint::y, {0.0, 1.0, 0.0}), "begin object rotation");
+    expect(session.preview_rotation(std::numbers::pi / 2.0), "preview object rotation");
+    expect(session.scene().resolve(corner)->position == initial,
+        "rotation preview leaves persistent object geometry unchanged");
+    expect(session.scene().nodes().front().geometry_revision == rotation_revision,
+        "rotation preview reuses the cached mesh revision");
+    const auto rotation_preview = session.entity_transform_preview();
+    expect(rotation_preview.has_value(), "rotation exposes a GPU preview transform");
+    expect(session.finish_rotation(), "commit object rotation");
     const Point3D rotated = session.scene().resolve(corner)->position;
     expect(std::abs(rotated.x - 0.0) < 1e-12, "rotation preserves expected X");
     expect(std::abs(rotated.z - 1.0) < 1e-12, "rotation produces expected Z");

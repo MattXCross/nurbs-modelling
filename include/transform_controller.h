@@ -9,6 +9,11 @@
 #include <string_view>
 #include <vector>
 
+struct EntityTransformPreview {
+    EntityId entity;
+    cad::AffineTransform3 transform;
+};
+
 class TransformController {
 public:
     TransformController(Scene& scene, SelectionModel& selection, CommandHistory& history)
@@ -49,6 +54,8 @@ public:
         return translation_active() || rotation_active() || scale_active();
     }
     [[nodiscard]] bool has_preview() const;
+    [[nodiscard]] bool preview_mutates_geometry() const;
+    [[nodiscard]] std::optional<EntityTransformPreview> entity_preview() const;
     [[nodiscard]] std::string_view active_description() const;
     [[nodiscard]] bool cancel();
     [[nodiscard]] bool commit();
@@ -64,6 +71,7 @@ private:
         std::vector<ControlPoint> initial_points;
         TranslationConstraint constraint;
         cad::Vector3 delta;
+        std::optional<EntityId> entity;
     };
     struct RotationState {
         std::vector<ControlPointSelection> selections;
@@ -72,6 +80,7 @@ private:
         cad::Vector3 axis;
         cad::Point3 pivot;
         double angle_radians{0.0};
+        std::optional<EntityId> entity;
     };
     struct ScaleState {
         std::vector<ControlPointSelection> selections;
@@ -80,12 +89,14 @@ private:
         cad::Vector3 axis;
         cad::Point3 pivot;
         double factor{1.0};
+        std::optional<EntityId> entity;
     };
 
     [[nodiscard]] std::vector<ControlPointSelection> targets() const;
     [[nodiscard]] std::vector<ControlPoint> capture(
         const std::vector<ControlPointSelection>& selections
     ) const;
+    [[nodiscard]] std::optional<EntityId> selected_object() const;
 
     Scene& m_scene;
     SelectionModel& m_selection;

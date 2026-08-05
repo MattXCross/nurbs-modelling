@@ -18,6 +18,7 @@ struct SurfaceTessellationSettings {
     double normal_angle_tolerance_radians{0.08726646259971647};
     std::size_t max_refinement_depth{8};
     std::size_t max_vertices{1'000'000};
+    bool best_effort{false};
 
     bool operator==(const SurfaceTessellationSettings&) const = default;
 };

@@ -4,6 +4,7 @@
 #include "orbit_camera.h"
 #include "entity_id.h"
 #include "viewport_display_settings.h"
+#include "transform_controller.h"
 
 #include <memory>
 #include <optional>
@@ -28,6 +29,7 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
+        std::optional<EntityTransformPreview> entity_preview,
         std::span<const GizmoPrimitive> gizmos,
         const ViewportDisplaySettings& display_settings,
         bool interactive_geometry_edit,

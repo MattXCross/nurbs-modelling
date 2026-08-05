@@ -9,6 +9,7 @@ struct EditorChange {
     bool interaction_mode{false};
     bool hover{false};
     bool camera{false};
+    bool viewport{false};
 
     void merge(EditorChange other) {
         selection = selection || other.selection;
@@ -19,10 +20,11 @@ struct EditorChange {
         interaction_mode = interaction_mode || other.interaction_mode;
         hover = hover || other.hover;
         camera = camera || other.camera;
+        viewport = viewport || other.viewport;
     }
 
     [[nodiscard]] bool empty() const {
         return !selection && !entities && !geometry && !properties && !history &&
-            !interaction_mode && !hover && !camera;
+            !interaction_mode && !hover && !camera && !viewport;
     }
 };

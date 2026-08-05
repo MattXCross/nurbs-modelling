@@ -208,6 +208,16 @@ void test_transforms() {
                      {7.0, 1.0, 5.0}, "transform composition order");
     }
 
+    const auto directional_scale = cad::AffineTransform3::directional_scale({1.0, 1.0, 0.0}, 3.0);
+    expect(directional_scale.has_value(), "create directional scale");
+    if (directional_scale) {
+        expect_point(
+            directional_scale->transform_point({1.0, 1.0, 2.0}),
+            {3.0, 3.0, 2.0},
+            "directional scale changes only the axis component"
+        );
+    }
+
     const auto rotation = cad::AffineTransform3::rotation(
         {0.0, 0.0, 1.0},
         std::numbers::pi / 2.0
@@ -229,6 +239,8 @@ void test_transforms() {
     }
 
     expect(!cad::AffineTransform3::rotation({}, 1.0), "reject zero rotation axis");
+    expect(!cad::AffineTransform3::directional_scale({}, 2.0),
+        "reject zero directional scale axis");
     expect(
         !cad::AffineTransform3::rotation(
             {1.0, 0.0, 0.0},

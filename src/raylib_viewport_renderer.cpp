@@ -33,6 +33,7 @@ layout(location = 1) in vec3 vertexNormal;
 layout(location = 2) in vec2 vertexUv;
 
 uniform mat4 mvp;
+uniform mat4 model;
 uniform float depthBias;
 
 out vec3 fragmentPosition;
@@ -40,10 +41,11 @@ out vec3 fragmentNormal;
 out vec2 fragmentUv;
 
 void main() {
-    fragmentPosition = vertexPosition;
-    fragmentNormal = vertexNormal;
+    vec4 worldPosition = model * vec4(vertexPosition, 1.0);
+    fragmentPosition = worldPosition.xyz;
+    fragmentNormal = mat3(transpose(inverse(model))) * vertexNormal;
     fragmentUv = vertexUv;
-    gl_Position = mvp * vec4(vertexPosition, 1.0);
+    gl_Position = mvp * worldPosition;
     gl_Position.z -= depthBias * gl_Position.w;
 }
 )glsl";
@@ -119,14 +121,34 @@ Camera3D to_raylib(const CameraState& camera) {
     };
 }
 
-cad::Aabb3 visible_bounds(const Scene& scene) {
+const cad::AffineTransform3* preview_transform(
+    EntityId entity,
+    const std::optional<EntityTransformPreview>& preview
+) {
+    return preview && preview->entity == entity ? &preview->transform : nullptr;
+}
+
+cad::Point3 transformed_point(
+    cad::Point3 point,
+    const cad::AffineTransform3* transform
+) {
+    return transform == nullptr ? point : transform->transform_point(point);
+}
+
+cad::Aabb3 visible_bounds(
+    const Scene& scene,
+    const std::optional<EntityTransformPreview>& preview
+) {
     cad::Aabb3 bounds;
     for (const SceneNode& node : scene.nodes()) {
         if (!node.visible || node.surface == nullptr) continue;
-        const auto entity_bounds = node.surface->control_bounds();
-        if (!entity_bounds) continue;
-        if (const auto minimum = entity_bounds->minimum()) (void)bounds.expand(*minimum);
-        if (const auto maximum = entity_bounds->maximum()) (void)bounds.expand(*maximum);
+        const cad::AffineTransform3* transform = preview_transform(node.id, preview);
+        const auto net = node.surface->control_net_2d();
+        for (std::size_t u = 0; u < net.extent(0); ++u) {
+            for (std::size_t v = 0; v < net.extent(1); ++v) {
+                (void)bounds.expand(transformed_point(net[u, v].position, transform));
+            }
+        }
     }
     return bounds;
 }
@@ -188,16 +210,23 @@ void draw_orientation_triad(const CameraState& camera, int framebuffer_height) {
     DrawCircleV(origin, 4.0f, LIGHTGRAY);
 }
 
-void draw_control_net(const NurbsSurface& surface) {
+void draw_control_net(
+    const NurbsSurface& surface,
+    const cad::AffineTransform3* transform
+) {
     const auto net = surface.control_net_2d();
     for (std::size_t u = 0; u < net.extent(0); ++u) {
         for (std::size_t v = 0; v < net.extent(1); ++v) {
-            const Vector3 position = to_raylib(net[u, v].position);
+            const Vector3 position = to_raylib(transformed_point(net[u, v].position, transform));
             if (u + 1 < net.extent(0)) {
-                DrawLine3D(position, to_raylib(net[u + 1, v].position), LIGHTGRAY);
+                DrawLine3D(position, to_raylib(transformed_point(
+                    net[u + 1, v].position, transform
+                )), LIGHTGRAY);
             }
             if (v + 1 < net.extent(1)) {
-                DrawLine3D(position, to_raylib(net[u, v + 1].position), LIGHTGRAY);
+                DrawLine3D(position, to_raylib(transformed_point(
+                    net[u, v + 1].position, transform
+                )), LIGHTGRAY);
             }
         }
     }
@@ -206,7 +235,8 @@ void draw_control_net(const NurbsSurface& surface) {
 void draw_control_points(
     EntityId entity,
     const NurbsSurface& surface,
-    std::span<const ControlPointSelection> selected_points
+    std::span<const ControlPointSelection> selected_points,
+    const cad::AffineTransform3* transform
 ) {
     const auto net = surface.control_net_2d();
     for (std::size_t u = 0; u < net.extent(0); ++u) {
@@ -218,7 +248,7 @@ void draw_control_points(
                 }
             );
             DrawSphere(
-                to_raylib(net[u, v].position),
+                to_raylib(transformed_point(net[u, v].position, transform)),
                 selected ? 0.24f : 0.15f,
                 selected ? GOLD : RED
             );
@@ -409,6 +439,37 @@ Matrix multiply_matrices(Matrix left, Matrix right) {
     return result;
 }
 
+Matrix to_raylib(const cad::AffineTransform3& transform) {
+    const cad::Point3 translation = transform.transform_point({});
+    const cad::Vector3 x = transform.transform_vector({1.0, 0.0, 0.0});
+    const cad::Vector3 y = transform.transform_vector({0.0, 1.0, 0.0});
+    const cad::Vector3 z = transform.transform_vector({0.0, 0.0, 1.0});
+    Matrix result{};
+    result.m0 = static_cast<float>(x.x);
+    result.m1 = static_cast<float>(x.y);
+    result.m2 = static_cast<float>(x.z);
+    result.m4 = static_cast<float>(y.x);
+    result.m5 = static_cast<float>(y.y);
+    result.m6 = static_cast<float>(y.z);
+    result.m8 = static_cast<float>(z.x);
+    result.m9 = static_cast<float>(z.y);
+    result.m10 = static_cast<float>(z.z);
+    result.m12 = static_cast<float>(translation.x);
+    result.m13 = static_cast<float>(translation.y);
+    result.m14 = static_cast<float>(translation.z);
+    result.m15 = 1.0f;
+    return result;
+}
+
+Matrix identity_matrix() {
+    Matrix result{};
+    result.m0 = 1.0f;
+    result.m5 = 1.0f;
+    result.m10 = 1.0f;
+    result.m15 = 1.0f;
+    return result;
+}
+
 DisplayColor surface_color(EntityId entity, bool selected, bool hovered) {
     if (selected) return {1.0f, 0.69f, 0.13f};
     if (hovered) return {0.25f, 0.78f, 1.0f};
@@ -443,6 +504,7 @@ public:
         std::span<const ControlPointSelection> selected_points,
         std::optional<EntityId> selected_entity,
         std::optional<EntityId> hovered_entity,
+        std::optional<EntityTransformPreview> entity_preview,
         std::span<const GizmoPrimitive> gizmos,
         const ViewportDisplaySettings& display_settings,
         bool interactive_geometry_edit,
@@ -454,7 +516,7 @@ public:
         const double aspect = static_cast<double>(framebuffer_width) /
             static_cast<double>(framebuffer_height);
         constexpr double degrees_to_radians = 3.14159265358979323846 / 180.0;
-        const ClipPlanes clipping = derive_clip_planes(camera, visible_bounds(scene));
+        const ClipPlanes clipping = derive_clip_planes(camera, visible_bounds(scene, entity_preview));
 
         rlClearColor(16, 20, 26, 255);
         rlClearScreenBuffers();
@@ -498,14 +560,18 @@ public:
 
             const bool selected = selected_entity == node.id;
             const bool hovered = !selected && hovered_entity == node.id;
+            const cad::AffineTransform3* transform = preview_transform(node.id, entity_preview);
+            const Matrix model = transform == nullptr ? identity_matrix() : to_raylib(*transform);
             if (display_settings.surface_mode != SurfaceDisplayMode::wireframe) {
-                draw_surface(*gpu, surface_color(node.id, selected, hovered), camera, false, 0.0f);
+                draw_surface(
+                    *gpu, surface_color(node.id, selected, hovered), camera, model, false, 0.0f
+                );
             }
             if (display_settings.surface_mode != SurfaceDisplayMode::shaded) {
                 const float depth_bias = display_settings.surface_mode ==
                     SurfaceDisplayMode::shaded_with_edges ? 0.0006f : 0.0f;
                 draw_surface(
-                    *gpu, edge_color(node.id, selected, hovered), camera, true, depth_bias
+                    *gpu, edge_color(node.id, selected, hovered), camera, model, true, depth_bias
                 );
             }
         }
@@ -518,9 +584,10 @@ public:
         rlEnableBackfaceCulling();
         for (const SceneNode& node : scene.nodes()) {
             if (!node.visible || node.surface == nullptr) continue;
-            if (display_settings.show_control_net) draw_control_net(*node.surface);
+            const cad::AffineTransform3* transform = preview_transform(node.id, entity_preview);
+            if (display_settings.show_control_net) draw_control_net(*node.surface, transform);
             if (display_settings.show_control_points) {
-                draw_control_points(node.id, *node.surface, selected_points);
+                draw_control_points(node.id, *node.surface, selected_points, transform);
             }
         }
         rlDrawRenderBatchActive();
@@ -545,6 +612,7 @@ private:
         m_shader = rlLoadShaderProgram(surface_vertex_shader, surface_fragment_shader);
         if (m_shader == 0) return;
         m_mvp_location = rlGetLocationUniform(m_shader, "mvp");
+        m_model_location = rlGetLocationUniform(m_shader, "model");
         m_color_location = rlGetLocationUniform(m_shader, "objectColor");
         m_camera_location = rlGetLocationUniform(m_shader, "cameraPosition");
         m_light_location = rlGetLocationUniform(m_shader, "lightDirection");
@@ -583,6 +651,7 @@ private:
         const GpuSurface& surface,
         DisplayColor color,
         const CameraState& camera,
+        Matrix model,
         bool wireframe,
         float depth_bias
     ) const {
@@ -593,6 +662,7 @@ private:
             rlGetMatrixModelview(), rlGetMatrixProjection()
         );
         rlSetUniformMatrix(m_mvp_location, mvp);
+        rlSetUniformMatrix(m_model_location, model);
         const auto color_values = color_components(color);
         rlSetUniform(m_color_location, color_values.data(), RL_SHADER_UNIFORM_VEC3, 1);
         const std::array<float, 3> camera_values{
@@ -619,17 +689,21 @@ private:
         rlDisableShader();
     }
 
-    cad::SurfaceTessellationSettings m_tessellation_settings{};
+    cad::SurfaceTessellationSettings m_tessellation_settings{
+        .best_effort = true
+    };
     cad::SurfaceTessellationSettings m_interactive_tessellation_settings{
         .chordal_tolerance = 0.12,
         .normal_angle_tolerance_radians = 0.35,
         .max_refinement_depth = 4,
-        .max_vertices = 65'536
+        .max_vertices = 65'536,
+        .best_effort = true
     };
     cad::SurfaceTessellationCache m_mesh_cache;
     std::unordered_map<std::uint64_t, GpuSurface> m_gpu_surfaces;
     unsigned int m_shader{0};
     int m_mvp_location{-1};
+    int m_model_location{-1};
     int m_color_location{-1};
     int m_camera_location{-1};
     int m_light_location{-1};
@@ -652,6 +726,7 @@ void RaylibViewportRenderer::render(
     std::span<const ControlPointSelection> selected_points,
     std::optional<EntityId> selected_entity,
     std::optional<EntityId> hovered_entity,
+    std::optional<EntityTransformPreview> entity_preview,
     std::span<const GizmoPrimitive> gizmos,
     const ViewportDisplaySettings& display_settings,
     bool interactive_geometry_edit,
@@ -664,6 +739,7 @@ void RaylibViewportRenderer::render(
         selected_points,
         selected_entity,
         hovered_entity,
+        entity_preview,
         gizmos,
         display_settings,
         interactive_geometry_edit,

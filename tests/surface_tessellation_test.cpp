@@ -249,6 +249,11 @@ void test_errors_resources_and_cache() {
         cad::SurfaceTessellationErrorCode::refinement_limit_reached,
         "report an exhausted refinement safeguard");
 
+    bounded.best_effort = true;
+    result = cad::tessellate_surface(*curved, bounded);
+    expect(result.has_value() && finite_mesh(*result),
+        "return a valid best-effort mesh when preview refinement is capped");
+
     cad::SurfaceTessellationCache cache;
     const auto first = cache.get(*plane, 7);
     const auto same = cache.get(*plane, 7);

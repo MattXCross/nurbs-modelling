@@ -815,7 +815,7 @@ void MainWindow::handle_editor_change(EditorChange change) {
         m_inspector->refresh();
     }
     if (change.selection || change.entities || change.geometry || change.hover ||
-        change.interaction_mode || change.camera) {
+        change.interaction_mode || change.camera || change.viewport) {
         m_viewport->update();
     }
     if (change.selection || change.history || change.interaction_mode || change.camera) {

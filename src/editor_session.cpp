@@ -481,21 +481,30 @@ bool EditorSession::begin_translation(TranslationConstraint constraint) {
 
 bool EditorSession::preview_translation(cad::Vector3 delta) {
     const bool changed = m_transform.preview_translation(delta);
-    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    if (changed) {
+        if (m_transform.preview_mutates_geometry()) {
+            notify(EditorChange{.geometry = true, .properties = true, .history = true});
+        } else {
+            notify(EditorChange{.viewport = true});
+        }
+    }
     return changed;
 }
 
 bool EditorSession::finish_translation() {
     const bool committed = m_transform.finish_translation();
-    notify(EditorChange{.history = true});
+    notify(EditorChange{.geometry = committed, .properties = committed, .history = true});
     return committed;
 }
 
 bool EditorSession::cancel_translation() {
     const bool was_active = m_transform.translation_active();
+    const bool mutated_geometry = m_transform.preview_mutates_geometry();
     const bool restored = m_transform.cancel_translation();
     if (was_active) {
-        notify(EditorChange{.geometry = true, .properties = true, .history = true});
+        notify(mutated_geometry
+            ? EditorChange{.geometry = true, .properties = true, .history = true}
+            : EditorChange{.history = true, .viewport = true});
     }
     return restored;
 }
@@ -515,20 +524,31 @@ bool EditorSession::begin_rotation(RotationConstraint constraint, cad::Vector3 a
 
 bool EditorSession::preview_rotation(double angle) {
     const bool changed = m_transform.preview_rotation(angle);
-    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    if (changed) {
+        if (m_transform.preview_mutates_geometry()) {
+            notify(EditorChange{.geometry = true, .properties = true, .history = true});
+        } else {
+            notify(EditorChange{.viewport = true});
+        }
+    }
     return changed;
 }
 
 bool EditorSession::finish_rotation() {
     const bool committed = m_transform.finish_rotation();
-    notify(EditorChange{.history = true});
+    notify(EditorChange{.geometry = committed, .properties = committed, .history = true});
     return committed;
 }
 
 bool EditorSession::cancel_rotation() {
     const bool was_active = m_transform.rotation_active();
+    const bool mutated_geometry = m_transform.preview_mutates_geometry();
     const bool restored = m_transform.cancel_rotation();
-    if (was_active) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    if (was_active) {
+        notify(mutated_geometry
+            ? EditorChange{.geometry = true, .properties = true, .history = true}
+            : EditorChange{.history = true, .viewport = true});
+    }
     return restored;
 }
 
@@ -547,20 +567,31 @@ bool EditorSession::begin_scale(ScaleConstraint constraint) {
 
 bool EditorSession::preview_scale(double factor) {
     const bool changed = m_transform.preview_scale(factor);
-    if (changed) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    if (changed) {
+        if (m_transform.preview_mutates_geometry()) {
+            notify(EditorChange{.geometry = true, .properties = true, .history = true});
+        } else {
+            notify(EditorChange{.viewport = true});
+        }
+    }
     return changed;
 }
 
 bool EditorSession::finish_scale() {
     const bool committed = m_transform.finish_scale();
-    notify(EditorChange{.history = true});
+    notify(EditorChange{.geometry = committed, .properties = committed, .history = true});
     return committed;
 }
 
 bool EditorSession::cancel_scale() {
     const bool was_active = m_transform.scale_active();
+    const bool mutated_geometry = m_transform.preview_mutates_geometry();
     const bool restored = m_transform.cancel_scale();
-    if (was_active) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    if (was_active) {
+        notify(mutated_geometry
+            ? EditorChange{.geometry = true, .properties = true, .history = true}
+            : EditorChange{.history = true, .viewport = true});
+    }
     return restored;
 }
 
@@ -590,8 +621,13 @@ bool EditorSession::set_transform_orientation(TransformOrientation orientation) 
 
 bool EditorSession::cancel_active_transform() {
     const bool was_active = m_transform.active();
+    const bool mutated_geometry = m_transform.preview_mutates_geometry();
     const bool restored = m_transform.cancel();
-    if (was_active) notify(EditorChange{.geometry = true, .properties = true, .history = true});
+    if (was_active) {
+        notify(mutated_geometry
+            ? EditorChange{.geometry = true, .properties = true, .history = true}
+            : EditorChange{.history = true, .viewport = true});
+    }
     return restored;
 }
 

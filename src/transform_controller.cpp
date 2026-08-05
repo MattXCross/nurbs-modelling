@@ -83,6 +83,31 @@ std::optional<std::array<cad::Vector3, 3>> make_frame(
     return z ? std::optional{std::array{*x, *y, *z}} : std::nullopt;
 }
 
+std::optional<cad::AffineTransform3> pivoted_transform(
+    cad::Point3 pivot,
+    const std::optional<cad::AffineTransform3>& linear
+) {
+    const auto to_pivot = cad::AffineTransform3::translation(
+        {pivot.x, pivot.y, pivot.z}
+    );
+    const auto from_pivot = cad::AffineTransform3::translation(
+        {-pivot.x, -pivot.y, -pivot.z}
+    );
+    if (!linear || !to_pivot || !from_pivot) return std::nullopt;
+    return *to_pivot * *linear * *from_pivot;
+}
+
+std::vector<ControlPoint> transformed_points(
+    const std::vector<ControlPoint>& initial,
+    const cad::AffineTransform3& transform
+) {
+    auto result = initial;
+    for (ControlPoint& point : result) {
+        point.position = transform.transform_point(point.position);
+    }
+    return result;
+}
+
 } // namespace
 
 bool TransformController::set_mode(TransformMode mode) {
@@ -132,6 +157,15 @@ std::vector<ControlPointSelection> TransformController::targets() const {
     return result;
 }
 
+std::optional<EntityId> TransformController::selected_object() const {
+    if (!m_selection.control_points().empty()) return std::nullopt;
+    const EntitySelection* entity = m_selection.entity();
+    const SceneNode* node = entity == nullptr ? nullptr : m_scene.find_entity(entity->entity);
+    return node != nullptr && node->surface != nullptr
+        ? std::optional{entity->entity}
+        : std::nullopt;
+}
+
 std::vector<ControlPoint> TransformController::capture(
     const std::vector<ControlPointSelection>& selections
 ) const {
@@ -148,18 +182,22 @@ std::vector<ControlPoint> TransformController::capture(
 }
 
 std::optional<cad::Point3> TransformController::pivot() const {
+    const auto previewed = [this](cad::Point3 point) {
+        const auto preview = entity_preview();
+        return preview ? preview->transform.transform_point(point) : point;
+    };
     const std::vector<ControlPointSelection> selected = targets();
     if (selected.empty()) {
         return std::nullopt;
     }
     if (m_pivot_mode == PivotMode::world_origin) {
-        return cad::Point3{};
+        return previewed(cad::Point3{});
     }
     if (m_pivot_mode == PivotMode::primary_control_point) {
         const ControlPointSelection* primary = m_selection.control_point();
         const ControlPoint* point = primary == nullptr ? nullptr : m_scene.resolve(*primary);
         if (point != nullptr) {
-            return point->position;
+            return previewed(point->position);
         }
     }
     long double x = 0.0L;
@@ -180,7 +218,8 @@ std::optional<cad::Point3> TransformController::pivot() const {
         static_cast<double>(y / count),
         static_cast<double>(z / count)
     };
-    return cad::is_finite(result) ? std::optional{result} : std::nullopt;
+    const cad::Point3 preview_result = previewed(result);
+    return cad::is_finite(preview_result) ? std::optional{preview_result} : std::nullopt;
 }
 
 std::optional<TransformFrame> TransformController::frame() const {
@@ -239,6 +278,17 @@ std::optional<TransformFrame> TransformController::frame() const {
         result.y = (*axes)[1];
         result.z = (*axes)[2];
     }
+    if (m_orientation == TransformOrientation::local) {
+        if (const auto preview = entity_preview()) {
+            if (const auto preview_axes = make_frame(
+                    preview->transform.transform_vector(result.x),
+                    preview->transform.transform_vector(result.y))) {
+                result.x = (*preview_axes)[0];
+                result.y = (*preview_axes)[1];
+                result.z = (*preview_axes)[2];
+            }
+        }
+    }
     return result;
 }
 
@@ -249,7 +299,9 @@ bool TransformController::begin_translation(TranslationConstraint constraint) {
     if (selections.empty() || points.size() != selections.size()) {
         return false;
     }
-    m_translation = TranslationState{std::move(selections), std::move(points), constraint, {}};
+    m_translation = TranslationState{
+        std::move(selections), std::move(points), constraint, {}, selected_object()
+    };
     return true;
 }
 
@@ -257,12 +309,10 @@ bool TransformController::preview_translation(cad::Vector3 delta) {
     if (!m_translation || !cad::is_finite(delta)) {
         return false;
     }
-    auto points = m_translation->initial_points;
-    for (ControlPoint& point : points) {
-        point.position = point.position + delta;
-    }
-    if (!apply_points(m_scene, m_translation->selections, points)) {
-        return false;
+    if (!m_translation->entity) {
+        auto points = m_translation->initial_points;
+        for (ControlPoint& point : points) point.position = point.position + delta;
+        if (!apply_points(m_scene, m_translation->selections, points)) return false;
     }
     m_translation->delta = delta;
     return true;
@@ -277,11 +327,14 @@ bool TransformController::finish_translation() {
     if (state.delta == cad::Vector3{}) {
         return false;
     }
-    auto final = capture(state.selections);
+    auto final = state.entity
+        ? transformed_points(state.initial_points, *cad::AffineTransform3::translation(state.delta))
+        : capture(state.selections);
     if (final.size() != state.selections.size()) {
-        (void)apply_points(m_scene, state.selections, state.initial_points);
+        if (!state.entity) (void)apply_points(m_scene, state.selections, state.initial_points);
         return false;
     }
+    if (state.entity && !apply_points(m_scene, state.selections, final)) return false;
     m_history.record_applied(std::make_unique<TransformCommand>(
         "Translate Selection", m_scene, std::move(state.selections),
         std::move(state.initial_points), std::move(final)
@@ -295,7 +348,7 @@ bool TransformController::cancel_translation() {
     }
     TranslationState state = std::move(*m_translation);
     m_translation.reset();
-    return apply_points(m_scene, state.selections, state.initial_points);
+    return state.entity || apply_points(m_scene, state.selections, state.initial_points);
 }
 
 bool TransformController::translate(cad::Vector3 delta) {
@@ -319,7 +372,8 @@ bool TransformController::begin_rotation(RotationConstraint constraint, cad::Vec
         return false;
     }
     m_rotation = RotationState{
-        std::move(selections), std::move(points), constraint, *unit_axis, *rotation_pivot, 0.0
+        std::move(selections), std::move(points), constraint, *unit_axis, *rotation_pivot, 0.0,
+        selected_object()
     };
     return true;
 }
@@ -328,17 +382,17 @@ bool TransformController::preview_rotation(double angle) {
     if (!m_rotation || !std::isfinite(angle)) {
         return false;
     }
-    const double cosine = std::cos(angle);
-    const double sine = std::sin(angle);
-    auto points = m_rotation->initial_points;
-    for (ControlPoint& point : points) {
-        const cad::Vector3 offset = point.position - m_rotation->pivot;
-        point.position = m_rotation->pivot + offset * cosine +
-            cad::cross(m_rotation->axis, offset) * sine +
-            m_rotation->axis * (cad::dot(m_rotation->axis, offset) * (1.0 - cosine));
-    }
-    if (!apply_points(m_scene, m_rotation->selections, points)) {
-        return false;
+    if (!m_rotation->entity) {
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        auto points = m_rotation->initial_points;
+        for (ControlPoint& point : points) {
+            const cad::Vector3 offset = point.position - m_rotation->pivot;
+            point.position = m_rotation->pivot + offset * cosine +
+                cad::cross(m_rotation->axis, offset) * sine +
+                m_rotation->axis * (cad::dot(m_rotation->axis, offset) * (1.0 - cosine));
+        }
+        if (!apply_points(m_scene, m_rotation->selections, points)) return false;
     }
     m_rotation->angle_radians = angle;
     return true;
@@ -353,11 +407,17 @@ bool TransformController::finish_rotation() {
     if (state.angle_radians == 0.0) {
         return false;
     }
-    auto final = capture(state.selections);
+    const auto transform = pivoted_transform(
+        state.pivot, cad::AffineTransform3::rotation(state.axis, state.angle_radians)
+    );
+    auto final = state.entity && transform
+        ? transformed_points(state.initial_points, *transform)
+        : capture(state.selections);
     if (final.size() != state.selections.size()) {
-        (void)apply_points(m_scene, state.selections, state.initial_points);
+        if (!state.entity) (void)apply_points(m_scene, state.selections, state.initial_points);
         return false;
     }
+    if (state.entity && (!transform || !apply_points(m_scene, state.selections, final))) return false;
     m_history.record_applied(std::make_unique<TransformCommand>(
         "Rotate Selection", m_scene, std::move(state.selections),
         std::move(state.initial_points), std::move(final)
@@ -371,7 +431,7 @@ bool TransformController::cancel_rotation() {
     }
     RotationState state = std::move(*m_rotation);
     m_rotation.reset();
-    return apply_points(m_scene, state.selections, state.initial_points);
+    return state.entity || apply_points(m_scene, state.selections, state.initial_points);
 }
 
 bool TransformController::rotate(cad::Vector3 axis, double angle) {
@@ -396,7 +456,8 @@ bool TransformController::begin_scale(ScaleConstraint constraint) {
     const cad::Vector3 axis = constraint == ScaleConstraint::x ? transform_frame->x :
         (constraint == ScaleConstraint::y ? transform_frame->y : transform_frame->z);
     m_scale = ScaleState{
-        std::move(selections), std::move(points), constraint, axis, transform_frame->pivot, 1.0
+        std::move(selections), std::move(points), constraint, axis, transform_frame->pivot, 1.0,
+        selected_object()
     };
     return true;
 }
@@ -405,16 +466,16 @@ bool TransformController::preview_scale(double factor) {
     if (!m_scale || !std::isfinite(factor) || factor <= 0.0) {
         return false;
     }
-    auto points = m_scale->initial_points;
-    for (ControlPoint& point : points) {
-        cad::Vector3 offset = point.position - m_scale->pivot;
-        offset = m_scale->constraint == ScaleConstraint::uniform
-            ? offset * factor
-            : offset + m_scale->axis * (cad::dot(offset, m_scale->axis) * (factor - 1.0));
-        point.position = m_scale->pivot + offset;
-    }
-    if (!apply_points(m_scene, m_scale->selections, points)) {
-        return false;
+    if (!m_scale->entity) {
+        auto points = m_scale->initial_points;
+        for (ControlPoint& point : points) {
+            cad::Vector3 offset = point.position - m_scale->pivot;
+            offset = m_scale->constraint == ScaleConstraint::uniform
+                ? offset * factor
+                : offset + m_scale->axis * (cad::dot(offset, m_scale->axis) * (factor - 1.0));
+            point.position = m_scale->pivot + offset;
+        }
+        if (!apply_points(m_scene, m_scale->selections, points)) return false;
     }
     m_scale->factor = factor;
     return true;
@@ -429,11 +490,18 @@ bool TransformController::finish_scale() {
     if (state.factor == 1.0) {
         return false;
     }
-    auto final = capture(state.selections);
+    const auto linear = state.constraint == ScaleConstraint::uniform
+        ? cad::AffineTransform3::scale({state.factor, state.factor, state.factor})
+        : cad::AffineTransform3::directional_scale(state.axis, state.factor);
+    const auto transform = pivoted_transform(state.pivot, linear);
+    auto final = state.entity && transform
+        ? transformed_points(state.initial_points, *transform)
+        : capture(state.selections);
     if (final.size() != state.selections.size()) {
-        (void)apply_points(m_scene, state.selections, state.initial_points);
+        if (!state.entity) (void)apply_points(m_scene, state.selections, state.initial_points);
         return false;
     }
+    if (state.entity && (!transform || !apply_points(m_scene, state.selections, final))) return false;
     m_history.record_applied(std::make_unique<TransformCommand>(
         "Scale Selection", m_scene, std::move(state.selections),
         std::move(state.initial_points), std::move(final)
@@ -447,7 +515,7 @@ bool TransformController::cancel_scale() {
     }
     ScaleState state = std::move(*m_scale);
     m_scale.reset();
-    return apply_points(m_scene, state.selections, state.initial_points);
+    return state.entity || apply_points(m_scene, state.selections, state.initial_points);
 }
 
 bool TransformController::scale(ScaleConstraint constraint, double factor) {
@@ -465,6 +533,34 @@ bool TransformController::has_preview() const {
     return (m_translation && m_translation->delta != cad::Vector3{}) ||
         (m_rotation && m_rotation->angle_radians != 0.0) ||
         (m_scale && m_scale->factor != 1.0);
+}
+
+bool TransformController::preview_mutates_geometry() const {
+    return (m_translation && !m_translation->entity) ||
+        (m_rotation && !m_rotation->entity) ||
+        (m_scale && !m_scale->entity);
+}
+
+std::optional<EntityTransformPreview> TransformController::entity_preview() const {
+    if (m_translation && m_translation->entity) {
+        const auto transform = cad::AffineTransform3::translation(m_translation->delta);
+        if (transform) return EntityTransformPreview{*m_translation->entity, *transform};
+    }
+    if (m_rotation && m_rotation->entity) {
+        const auto transform = pivoted_transform(
+            m_rotation->pivot,
+            cad::AffineTransform3::rotation(m_rotation->axis, m_rotation->angle_radians)
+        );
+        if (transform) return EntityTransformPreview{*m_rotation->entity, *transform};
+    }
+    if (m_scale && m_scale->entity) {
+        const auto linear = m_scale->constraint == ScaleConstraint::uniform
+            ? cad::AffineTransform3::scale({m_scale->factor, m_scale->factor, m_scale->factor})
+            : cad::AffineTransform3::directional_scale(m_scale->axis, m_scale->factor);
+        const auto transform = pivoted_transform(m_scale->pivot, linear);
+        if (transform) return EntityTransformPreview{*m_scale->entity, *transform};
+    }
+    return std::nullopt;
 }
 
 std::string_view TransformController::active_description() const {

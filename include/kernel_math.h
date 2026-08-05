@@ -375,6 +375,25 @@ public:
         return transform;
     }
 
+    [[nodiscard]] static std::optional<AffineTransform3> directional_scale(
+        Vector3 axis,
+        double factor
+    ) noexcept {
+        const auto unit_axis = normalized(axis);
+        if (!unit_axis || !std::isfinite(factor)) {
+            return std::nullopt;
+        }
+        const double amount = factor - 1.0;
+        const double x = unit_axis->x;
+        const double y = unit_axis->y;
+        const double z = unit_axis->z;
+        return AffineTransform3({
+            1.0 + amount * x * x, amount * x * y, amount * x * z, 0.0,
+            amount * y * x, 1.0 + amount * y * y, amount * y * z, 0.0,
+            amount * z * x, amount * z * y, 1.0 + amount * z * z, 0.0
+        });
+    }
+
     [[nodiscard]] static std::optional<AffineTransform3> rotation(
         Vector3 axis,
         double radians

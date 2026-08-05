@@ -91,7 +91,10 @@ public:
     [[nodiscard]] bool scale_active() const { return m_transform.scale_active(); }
     [[nodiscard]] bool transform_active() const { return m_transform.active(); }
     [[nodiscard]] bool interactive_geometry_edit() const {
-        return transform_active() || pending_edit_has_preview();
+        return m_transform.preview_mutates_geometry() || pending_edit_has_preview();
+    }
+    [[nodiscard]] std::optional<EntityTransformPreview> entity_transform_preview() const {
+        return m_transform.entity_preview();
     }
     [[nodiscard]] TransformMode transform_mode() const { return m_transform.mode(); }
     [[nodiscard]] PivotMode pivot_mode() const { return m_transform.pivot_mode(); }
